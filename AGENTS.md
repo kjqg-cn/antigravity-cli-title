@@ -143,27 +143,18 @@ This project is actively maintained and evolved by the user. Future agents shoul
 - [ ] **Ecosystem Integration**:
   - Open a PR or discussion in `weby-homelab/antigravity-cli-statusline` proposing `antigravity-cli-title` as the recommended companion title plugin.
 
-### 5.2 Upcoming Feature Roadmap (Prioritized by Necessity)
-
-Future agents and contributors should implement features in the following prioritized order:
-
-1. **Priority 1 (Core Performance) - Fast Native Execution Engine (`title.exe`)**:
-   - **Root cause**: The current ~1.0s - 1.5s delay is dominated by Windows spawning `powershell.exe` and loading the .NET CLR runtime.
-   - **Solution**: Compile a zero-dependency, single-binary executable (written in Go or Rust, < 1MB) that performs stdin parsing, ancestor traversal, and SQLite query natively.
-   - **Target**: Shrink end-to-end title render latency from ~1500ms down to **< 20ms** (true imperceptible instant updates).
-   - **Dual-Track Compatibility**: Retain `title.ps1` as the zero-compilation default fallback; `install.ps1` auto-detects and configures the native binary if available.
-
-2. **Priority 2 (Visual Impact) - Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
-   - Implement ConEmu / Windows Terminal `OSC 9;4` escape sequence support.
-   - When in `⚙️ Working`: Trigger an indeterminate spinning progress ring on the tab header and Windows taskbar.
-   - When in `⚠️ Waiting`: Trigger a yellow warning flash/ring.
-   - When in `✅ Completed`: Clear/reset progress ring.
-
-3. **Priority 3 (User Customization) - Custom State Emoji / Text Mapping Config**:
-   - Allow users to override default state emojis (`⚪`, `⚙️`, `⚠️`, `✅`) or text modes via command-line flags or a user configuration block in `settings.json`.
-
-4. **Priority 4 (Cross-Platform Polish) - Linux / macOS Terminal Enhancements**:
-   - Verify and tune escape sequence compatibility across iTerm2, Kitty, WezTerm, and Alacritty.
-
-5. **Priority 5 (Cosmetic) - Custom Terminal Tab Logo / Profile Integration**:
-   - Provide an option in `install.ps1` (e.g. `-SetTerminalIcon`) to automatically configure Windows Terminal profiles with an official Antigravity logo (`.ico`/`.png`).
+### 5.2 Upcoming Feature Explorations (v0.2.0+)
+- [ ] **Fast Native Execution Engine (`title.exe`)**:
+  - Compile a zero-dependency, single-binary executable (Go or Rust) to eliminate `powershell.exe` cold-start overhead.
+  - Target end-to-end latency < 20ms while retaining `title.ps1` as fallback.
+- [ ] **Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
+  - Implement ConEmu / Windows Terminal `OSC 9;4` escape sequence support.
+  - When in `⚙️ Working`: Trigger an indeterminate spinning progress ring on the tab header and taskbar.
+  - When in `⚠️ Waiting`: Trigger a yellow warning flash/ring.
+  - When in `✅ Completed`: Clear/reset progress ring.
+- [ ] **Custom State Emoji / Text Mapping Config**:
+  - Allow users to override default emojis (`⚪`, `⚙️`, `⚠️`, `✅`) via command-line flags or a user configuration block in `settings.json`.
+- [ ] **Custom Terminal Tab Logo / Profile Integration**:
+  - Provide an option in `install.ps1` (e.g. `-SetTerminalIcon`) to automatically configure Windows Terminal profiles with an official Antigravity logo (`.ico`/`.png`).
+- [ ] **Linux / macOS Terminal Enhancements**:
+  - Verify escape sequence compatibility across iTerm2, Kitty, WezTerm, and Alacritty.
