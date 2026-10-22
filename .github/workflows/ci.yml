@@ -12,17 +12,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate PowerShell Script Syntax & UTF-8 BOM
+      - name: Validate PowerShell Script Syntax & Encodings
         shell: powershell
         run: |
-          $scripts = Get-ChildItem -Recurse -Filter *.ps1
-          foreach ($s in $scripts) {
-              Write-Host "Checking BOM for: $($s.FullName)"
-              $bytes = [System.IO.File]::ReadAllBytes($s.FullName)
+          # 1. scripts/title.ps1 MUST have UTF-8 BOM (for Windows PowerShell 5.1 -File execution of emojis)
+          $bomScripts = @("scripts/title.ps1")
+          foreach ($rel in $bomScripts) {
+              $fullPath = Resolve-Path $rel
+              $bytes = [System.IO.File]::ReadAllBytes($fullPath)
               if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
-                  Write-Error "File $($s.Name) lacks required UTF-8 BOM!"
+                  Write-Error "File $rel MUST have UTF-8 BOM for Windows PowerShell 5.1 compatibility!"
                   exit 1
               }
+              Write-Host "Verified UTF-8 BOM for: $rel"
+          }
+
+          # 2. Web installers (install.ps1, uninstall.ps1) MUST NOT have BOM (to prevent irm | iex \uFEFF parser error)
+          $noBomScripts = @("install.ps1", "uninstall.ps1")
+          foreach ($rel in $noBomScripts) {
+              $fullPath = Resolve-Path $rel
+              $bytes = [System.IO.File]::ReadAllBytes($fullPath)
+              if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+                  Write-Error "File $rel MUST NOT have UTF-8 BOM (breaks 'irm | iex' param parsing)!"
+                  exit 1
+              }
+              Write-Host "Verified UTF-8 No-BOM for: $rel"
+          }
+
+          # 3. Validate AST syntax for all PowerShell scripts
+          $allScripts = Get-ChildItem -Recurse -Filter *.ps1
+          foreach ($s in $allScripts) {
               Write-Host "Validating AST for: $($s.FullName)"
               $errors = $null
               [System.Management.Automation.Language.Parser]::ParseFile($s.FullName, [ref]$null, [ref]$errors) | Out-Null
@@ -31,7 +50,7 @@ jobs:
                   exit 1
               }
           }
-          Write-Host "All PowerShell scripts passed BOM & AST syntax check."
+          Write-Host "All PowerShell scripts passed encoding and AST syntax check."
 
       - name: Validate Bash Script Syntax
         shell: bash

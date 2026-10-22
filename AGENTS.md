@@ -86,8 +86,10 @@ Under `agent_state == "tool_use"`, the script seeks the last 16KB of `transcript
 
 > [!CAUTION]
 > **PowerShell Encoding Rule**:
-> Every `.ps1` file in this repository **MUST BE SAVED WITH UTF-8 BOM (`utf-8-sig`)**.
-> Windows PowerShell 5.1 parses non-BOM UTF-8 files using the system default code page (e.g. GBK/Windows-1252), which corrupts multibyte Unicode emojis and strings (e.g., turning `⚪` into broken double-byte tokens like `鈿?`), resulting in fatal syntax errors.
+> - **`scripts/title.ps1` MUST BE SAVED WITH UTF-8 BOM (`utf-8-sig`)**:
+>   It is executed locally via `powershell.exe -File ...`. Windows PowerShell 5.1 parses non-BOM UTF-8 files using the system default ANSI code page (e.g. GBK/Windows-1252), which corrupts multibyte Unicode emojis (`⚪`, `⚙️`, `⚠️`, `✅`), causing fatal syntax errors.
+> - **`install.ps1` and `uninstall.ps1` MUST BE SAVED WITHOUT BOM (UTF-8 No-BOM)**:
+>   These scripts are downloaded over HTTP and executed via `irm ... | iex`. When PowerShell's `Invoke-RestMethod` downloads a script with BOM, it decodes the BOM into a leading Unicode char `\uFEFF` in the string. When passed to `iex`, `\uFEFF#` is not recognized as a comment, invalidating the subsequent `param(...)` block and throwing `Invoke-Expression: 赋值表达式无效...` (`InvalidLeftHandSide`).
 
 > [!WARNING]
 > **No Blocking Calls in Title Renderer**:

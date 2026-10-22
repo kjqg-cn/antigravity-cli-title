@@ -1,4 +1,4 @@
-﻿# uninstall.ps1 - Uninstaller for Antigravity CLI Window Title (Windows/PowerShell)
+# uninstall.ps1 - Uninstaller for Antigravity CLI Window Title (Windows/PowerShell)
 param(
     [switch]$Purge
 )
@@ -7,7 +7,10 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "==========================================================" -ForegroundColor Blue
-Write-Host "  🗑️ Uninstalling Antigravity CLI Window Title (Windows) " -ForegroundColor Yellow
+$eTrash    = [char]::ConvertFromUtf32(0x1F5D1) + [char]0xFE0F
+$eSparkles = [char]::ConvertFromUtf32(0x2728)
+
+Write-Host "  $eTrash Uninstalling Antigravity CLI Window Title (Windows) " -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Blue
 
 $homeDir = $env:USERPROFILE
@@ -47,5 +50,5 @@ if ($Purge) {
     }
 }
 
-Write-Host "`n✨ Uninstallation completed." -ForegroundColor Cyan
+Write-Host "`n$eSparkles Uninstallation completed." -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Blue

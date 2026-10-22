@@ -1,4 +1,4 @@
-﻿# install.ps1 - Installer for Antigravity CLI Window Title (Windows/PowerShell)
+# install.ps1 - Installer for Antigravity CLI Window Title (Windows/PowerShell)
 param(
     [switch]$NoPrefix,
     [switch]$Text,
@@ -10,7 +10,14 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "   🚀 Antigravity CLI Window Title Installer (Windows)    " -ForegroundColor Green
+$eRocket   = [char]::ConvertFromUtf32(0x1F680)
+$eSparkles = [char]::ConvertFromUtf32(0x2728)
+$eReady    = [char]::ConvertFromUtf32(0x26AA)
+$eWorking  = [char]::ConvertFromUtf32(0x2699) + [char]0xFE0F
+$eWaiting  = [char]::ConvertFromUtf32(0x26A0) + [char]0xFE0F
+$eDone     = [char]::ConvertFromUtf32(0x2705)
+
+Write-Host "   $eRocket Antigravity CLI Window Title Installer (Windows)    " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $homeDir = $env:USERPROFILE
@@ -112,14 +119,14 @@ $updatedJson = $settingsObj | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($settingsPath, $updatedJson, [System.Text.Encoding]::UTF8)
 Write-Host "[+] Successfully configured 'title' in: $settingsPath" -ForegroundColor Green
 
-Write-Host "`n✨ Installation complete!" -ForegroundColor Cyan
+Write-Host "`n$eSparkles Installation complete!" -ForegroundColor Cyan
 Write-Host "   Command configured: $titleCmd" -ForegroundColor Gray
 Write-Host "   Installed directory: $targetDir" -ForegroundColor Gray
 Write-Host "   To uninstall later, run:" -ForegroundColor Gray
 Write-Host "     powershell.exe -File `"$destUninstall`"" -ForegroundColor Gray
 Write-Host "   Try asking Antigravity CLI a question to see the 4-state indicator in action:`n"
-Write-Host "   ⚪ Ready     -> Initial state / re-entering history" -ForegroundColor Gray
-Write-Host "   ⚙️  Working   -> Thinking / background task execution" -ForegroundColor Yellow
-Write-Host "   ⚠️  Waiting   -> Prompting user (ask_question) or permission confirmation" -ForegroundColor Red
-Write-Host "   ✅ Done      -> Turn completed; remains done until new input" -ForegroundColor Green
+Write-Host "   $eReady Ready     -> Initial state / re-entering history" -ForegroundColor Gray
+Write-Host "   $eWorking  Working   -> Thinking / background task execution" -ForegroundColor Yellow
+Write-Host "   $eWaiting  Waiting   -> Prompting user (ask_question) or permission confirmation" -ForegroundColor Red
+Write-Host "   $eDone Done      -> Turn completed; remains done until new input" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
