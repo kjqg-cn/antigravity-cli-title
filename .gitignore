@@ -1,0 +1,21 @@
+# Session markers & runtime PID caches
+*.pid
+*.marker
+marker_*.txt
+session_*.pid
+call_tree.log
+real_parent.log
+live_status*.json
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backups
+*.bak
+*.tmp
+
+# Test artifacts
+scratch/
+test_*/

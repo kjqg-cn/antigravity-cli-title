@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PowerShell Script Syntax & UTF-8 BOM
+        shell: powershell
+        run: |
+          $scripts = Get-ChildItem -Recurse -Filter *.ps1
+          foreach ($s in $scripts) {
+              Write-Host "Checking BOM for: $($s.FullName)"
+              $bytes = [System.IO.File]::ReadAllBytes($s.FullName)
+              if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
+                  Write-Error "File $($s.Name) lacks required UTF-8 BOM!"
+                  exit 1
+              }
+              Write-Host "Validating AST for: $($s.FullName)"
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($s.FullName, [ref]$null, [ref]$errors) | Out-Null
+              if ($errors) {
+                  $errors | ForEach-Object { Write-Error $_ }
+                  exit 1
+              }
+          }
+          Write-Host "All PowerShell scripts passed BOM & AST syntax check."
+
+      - name: Validate Bash Script Syntax
+        shell: bash
+        run: |
+          if command -v bash >/dev/null 2>&1; then
+              bash -n scripts/title.sh
+              bash -n install.sh
+              bash -n uninstall.sh
+              echo "All Bash scripts passed syntax validation."
+          fi
