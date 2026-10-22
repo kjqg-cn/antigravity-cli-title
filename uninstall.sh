@@ -37,16 +37,11 @@ if os.path.exists(settings_path):
 fi
 
 TARGET_DIR="${HOME_DIR}/.gemini/antigravity-cli-title"
-LEGACY_DIR="${HOME_DIR}/.antigravity"
 
 if [[ "$PURGE" == true ]]; then
     if [[ -d "$TARGET_DIR" ]]; then
         rm -rf "$TARGET_DIR"
         echo "[+] Purged installation directory: $TARGET_DIR"
-    fi
-    if [[ -f "${LEGACY_DIR}/title.sh" ]]; then
-        rm -f "${LEGACY_DIR}/title.sh"
-        echo "[+] Purged legacy file: ${LEGACY_DIR}/title.sh"
     fi
 else
     if [[ -d "$TARGET_DIR" ]]; then

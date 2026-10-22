@@ -34,18 +34,12 @@ if (Test-Path $settingsPath) {
 }
 
 $targetDir = Join-Path $homeDir ".gemini\antigravity-cli-title"
-$legacyDir = Join-Path $homeDir ".antigravity"
 
 if ($Purge) {
     Set-Location $homeDir
     if (Test-Path $targetDir) {
         Remove-Item -Path $targetDir -Recurse -Force
         Write-Host "[+] Purged installation directory: $targetDir" -ForegroundColor Green
-    }
-    $legacyFile = Join-Path $legacyDir "title.ps1"
-    if (Test-Path $legacyFile) {
-        Remove-Item -Path $legacyFile -Force
-        Write-Host "[+] Purged legacy file: $legacyFile" -ForegroundColor Gray
     }
 } else {
     if (Test-Path $targetDir) {
