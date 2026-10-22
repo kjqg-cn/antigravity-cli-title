@@ -55,15 +55,21 @@ try:
                 except Exception:
                     pass
 
+    subagents = d.get("subagents", [])
+    active_sub = sum(1 for s in subagents if isinstance(s, dict) and s.get("status") not in ["completed", "failed", "killed", "error", "cancelled"])
+    task_count = int(d.get("task_count", 0) or 0)
+    has_bg = "true" if (active_sub > 0 or task_count > 0) else "false"
+
     safe_title = title.replace("\"", "\\\"").replace("$", "\\$").replace("`", "\\`")
     safe_cwd = cwd.replace("\"", "\\\"").replace("$", "\\$").replace("`", "\\`")
     print(f"STATE=\"{state}\"")
     print(f"CONV_ID=\"{cid}\"")
     print(f"CONV_TITLE=\"{safe_title}\"")
     print(f"CWD_DIR=\"{safe_cwd}\"")
+    print(f"HAS_BG=\"{has_bg}\"")
 except Exception:
-    print("STATE=\"idle\" CONV_ID=\"\" CONV_TITLE=\"\" CWD_DIR=\"\"")
-' 2>/dev/null || echo 'STATE="idle" CONV_ID="" CONV_TITLE="" CWD_DIR=""')
+    print("STATE=\"idle\" CONV_ID=\"\" CONV_TITLE=\"\" CWD_DIR=\"\" HAS_BG=\"false\"")
+' 2>/dev/null || echo 'STATE="idle" CONV_ID="" CONV_TITLE="" CWD_DIR="" HAS_BG="false"')
 
 HOME_DIR="${HOME:-/root}"
 TRANSCRIPT_PATH="${HOME_DIR}/.gemini/antigravity-cli/brain/${CONV_ID}/.system_generated/logs/transcript.jsonl"
@@ -177,14 +183,38 @@ if last_resp:
 print("NO")
 ' 2>/dev/null || echo "NO")
 
-            if [[ "$IS_ASK" == "YES" ]]; then
-                EMOJI="⚠️"
-                [[ "$USE_TEXT_STATUS" == true ]] && EMOJI="[WAITING]"
+            if [[ "$HAS_BG" == "true" && "$IS_ASK" != "YES" ]]; then
+                EMOJI="⚙️"
+                [[ "$USE_TEXT_STATUS" == true ]] && EMOJI="[WORKING]"
+            elif [[ "$IS_ASK" == "YES" ]]; then
+                HAS_WORKER=false
+                if [[ -n "$AGY_PID" ]]; then
+                    for cpid in $(pgrep -P "$AGY_PID" 2>/dev/null || true); do
+                        [[ "$cpid" -eq "$$" ]] && continue
+                        cmdline=$(ps -p "$cpid" -o args= 2>/dev/null || true)
+                        if [[ "$cmdline" =~ statusline || "$cmdline" =~ title\.sh ]]; then
+                            continue
+                        fi
+                        HAS_WORKER=true
+                        break
+                    done
+                fi
+                if [[ "$HAS_WORKER" == true ]]; then
+                    EMOJI="⚙️"
+                    [[ "$USE_TEXT_STATUS" == true ]] && EMOJI="[WORKING]"
+                else
+                    EMOJI="⚠️"
+                    [[ "$USE_TEXT_STATUS" == true ]] && EMOJI="[WAITING]"
+                fi
             fi
         fi
         ;;
     idle|*)
-        if [[ -n "$MARKER_FILE" && "$HAS_HISTORY" == true && -f "$MARKER_FILE" ]]; then
+        if [[ "$HAS_BG" == "true" ]]; then
+            EMOJI="⚙️"
+            [[ "$USE_TEXT_STATUS" == true ]] && EMOJI="[WORKING]"
+            [[ -n "$MARKER_FILE" ]] && echo "${AGY_PID}:RUNNING" > "$MARKER_FILE" 2>/dev/null || true
+        elif [[ -n "$MARKER_FILE" && "$HAS_HISTORY" == true && -f "$MARKER_FILE" ]]; then
             SAVED_CONTENT=$(cat "$MARKER_FILE" 2>/dev/null || echo "")
             SAVED_PID="${SAVED_CONTENT%%:*}"
             if [[ -n "$SAVED_PID" && "$SAVED_PID" == "$AGY_PID" ]]; then

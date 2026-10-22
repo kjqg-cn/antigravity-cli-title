@@ -50,7 +50,9 @@ antigravity-cli-title/
      A session can **ONLY** be marked as `✅ Completed` if `hasHistory == true` (i.e. at least one real `USER_INPUT` exists in `transcript.jsonl` or `conversation_title` is set). In a freshly opened workspace before the first prompt, state is **guaranteed to be `⚪ Ready`**.
   4. **The `default` ID Isolation Rule**:
      When `conversation_id` is empty (pre-flight/fresh launch), the renderer will **never** read or write a shared `marker_default.txt`, eliminating cross-session collision.
-  5. When state transitions to `idle`:
+  5. **Background Subagents & Tasks Integration**:
+     When the main agent finishes its turn, `agent_state` transitions to `idle`. However, if active subagents (`$data.subagents`) or background tasks (`$data.task_count > 0`) are running, the session state remains **`⚙️ Working`** and writes `RUNNING` to the marker file. It only transitions to **`✅ Completed`** once all background tasks and subagents have fully finished.
+  6. When state transitions to `idle` without background jobs:
      - If `hasHistory == true`, `conversation_id` is valid, and the marker matches the currently running `agy.exe` and was active in this lifetime ➔ **`✅` Completed**.
      - If the marker belongs to a dead PID or doesn't match (user closed CLI and reopened) ➔ **`⚪` Ready**.
      - If `hasHistory == false` ➔ **`⚪` Ready**.
@@ -71,8 +73,12 @@ Antigravity CLI does not send a `conversation_title` field in standard telemetry
 ### 2.4 Sub-Event Inspection (`ask_question` & Permissions)
 Under `agent_state == "tool_use"`, the script seeks the last 16KB of `transcript.jsonl` to locate the final `PLANNER_RESPONSE`:
 1. If tool name is `ask_question`, `ask`, `prompt_user`, etc. ➔ `⚠️ Waiting`.
-2. If tool name is `run_command` / file edit and matches `settings.json`'s `permissions.ask` (or is not in `permissions.allow`) ➔ `⚠️ Waiting`.
-3. Otherwise ➔ `⚙️ Working`.
+2. If tool name is `run_command` matching `permissions.ask` (or not in `permissions.allow`):
+   - Check if `agy.exe` already has an active worker child process (`FastProcFinder::HasActiveWorker`):
+     - If worker child exists (user confirmed, command executing) ➔ `⚙️ Working`.
+     - If no worker child exists (blocked on `[y/n]` interactive prompt) ➔ `⚠️ Waiting`.
+3. If tool name is sensitive file edit matching `permissions.ask` ➔ `⚠️ Waiting`.
+4. Otherwise ➔ `⚙️ Working`.
 
 ---
 

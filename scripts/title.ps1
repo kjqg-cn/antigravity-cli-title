@@ -58,6 +58,23 @@ try {
     exit
 }
 
+# Extract active subagents & tasks count
+$activeSubagents = 0
+if ($data.subagents) {
+    try {
+        $activeSubagents = @($data.subagents | Where-Object {
+            $_ -and $_.status -and ($_.status.ToString().ToLower() -notin @("completed", "failed", "killed", "error", "cancelled"))
+        }).Count
+    } catch {}
+}
+
+$activeTasks = 0
+if ($data.task_count -ne $null) {
+    try {
+        $activeTasks = [int]$data.task_count
+    } catch {}
+}
+
 # 1. Native Fast Parent Process Lookup (Precise Window Isolation)
 $csharpCode = @"
 using System;
@@ -139,6 +156,149 @@ public static class FastProcFinder {
             if (db != IntPtr.Zero) sqlite3_close(db);
         }
         return null;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct PROCESSENTRY32 {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool ReadProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        [Out] byte[] lpBuffer,
+        int dwSize,
+        out IntPtr lpNumberOfBytesRead);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(
+        int dwDesiredAccess,
+        bool bInheritHandle,
+        int dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool Process32Next(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+    private const int PROCESS_QUERY_INFORMATION = 0x0400;
+    private const int PROCESS_VM_READ = 0x0010;
+
+    public static string GetCommandLine(int pid) {
+        IntPtr hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+        if (hProc == IntPtr.Zero) return "";
+        try {
+            PROCESS_BASIC_INFORMATION pbi = new PROCESS_BASIC_INFORMATION();
+            int retLen;
+            int status = NtQueryInformationProcess(hProc, 0, ref pbi, Marshal.SizeOf(pbi), out retLen);
+            if (status != 0 || pbi.PebBaseAddress == IntPtr.Zero) return "";
+
+            long procParams = 0;
+            long bufferPtr = 0;
+            short length = 0;
+
+            if (IntPtr.Size == 8) {
+                IntPtr ppOffset = new IntPtr(pbi.PebBaseAddress.ToInt64() + 0x20);
+                byte[] addrBuf = new byte[8];
+                IntPtr read;
+                if (!ReadProcessMemory(hProc, ppOffset, addrBuf, 8, out read) || read.ToInt32() != 8) return "";
+                procParams = BitConverter.ToInt64(addrBuf, 0);
+                if (procParams == 0) return "";
+
+                byte[] header = new byte[16];
+                if (!ReadProcessMemory(hProc, new IntPtr(procParams + 0x70), header, 16, out read) || read.ToInt32() != 16) return "";
+                length = BitConverter.ToInt16(header, 0);
+                bufferPtr = BitConverter.ToInt64(header, 8);
+            } else {
+                IntPtr ppOffset = new IntPtr(pbi.PebBaseAddress.ToInt32() + 0x10);
+                byte[] addrBuf = new byte[4];
+                IntPtr read;
+                if (!ReadProcessMemory(hProc, ppOffset, addrBuf, 4, out read) || read.ToInt32() != 4) return "";
+                procParams = BitConverter.ToInt32(addrBuf, 0);
+                if (procParams == 0) return "";
+
+                byte[] header = new byte[8];
+                if (!ReadProcessMemory(hProc, new IntPtr(procParams + 0x40), header, 8, out read) || read.ToInt32() != 8) return "";
+                length = BitConverter.ToInt16(header, 0);
+                bufferPtr = BitConverter.ToInt32(header, 4);
+            }
+
+            if (length <= 0 || bufferPtr == 0) return "";
+            byte[] cmdBytes = new byte[length];
+            IntPtr finalRead;
+            if (!ReadProcessMemory(hProc, new IntPtr(bufferPtr), cmdBytes, length, out finalRead) || finalRead.ToInt32() != length) return "";
+            return Encoding.Unicode.GetString(cmdBytes);
+        } catch {
+            return "";
+        } finally {
+            CloseHandle(hProc);
+        }
+    }
+
+    public static bool HasActiveWorker(int agyPid, int currentPid) {
+        if (agyPid <= 0) return false;
+
+        var selfAncestors = new System.Collections.Generic.HashSet<int>();
+        int cur = currentPid;
+        for (int i = 0; i < 6; i++) {
+            if (cur <= 0 || cur == agyPid) break;
+            selfAncestors.Add(cur);
+            cur = GetParentPid(cur);
+        }
+
+        IntPtr snap = CreateToolhelp32Snapshot(2, 0);
+        if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return false;
+
+        try {
+            PROCESSENTRY32 entry = new PROCESSENTRY32();
+            entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+            if (Process32First(snap, ref entry)) {
+                do {
+                    if (entry.th32ParentProcessID == (uint)agyPid) {
+                        int childPid = (int)entry.th32ProcessID;
+                        if (selfAncestors.Contains(childPid)) continue;
+
+                        string exe = (entry.szExeFile ?? "").ToLowerInvariant();
+                        if (exe == "conhost.exe") continue;
+
+                        string cmd = GetCommandLine(childPid).ToLowerInvariant();
+                        if (cmd.Contains("statusline") || cmd.Contains("title.ps1") || cmd.Contains("title.sh") || cmd.Contains("conhost")) {
+                            continue;
+                        }
+
+                        if (!string.IsNullOrEmpty(cmd)) {
+                            return true;
+                        }
+
+                        // Fallback: if cmd is restricted, non-shell binaries represent active commands
+                        if (exe != "cmd.exe" && exe != "powershell.exe" && exe != "pwsh.exe" && exe.Length > 0) {
+                            return true;
+                        }
+                    }
+                } while (Process32Next(snap, ref entry));
+            }
+        } finally {
+            CloseHandle(snap);
+        }
+        return false;
     }
 }
 "@
@@ -339,6 +499,20 @@ switch ($agentState) {
                         }
                     }
                     
+                    # If background tasks or subagents are running, keep WORKING unless actively prompting with ask_question
+                    if ($activeTasks -gt 0 -or $activeSubagents -gt 0) {
+                        $isAskPrompt = $false
+                        if ($lastStep -and $lastStep.type -eq "PLANNER_RESPONSE" -and $lastStep.tool_calls -and $lastStep.tool_calls.Count -gt 0) {
+                            $tName = if ($lastStep.tool_calls[0].name) { $lastStep.tool_calls[0].name.ToString() } else { "" }
+                            if ($tName -in @("ask_question", "ask", "prompt_user", "get_confirmation", "request_feedback")) {
+                                $isAskPrompt = $true
+                            }
+                        }
+                        if (-not $isAskPrompt) {
+                            break
+                        }
+                    }
+
                     if ($lastStep -and $lastStep.type -eq "PLANNER_RESPONSE" -and $lastStep.tool_calls -and $lastStep.tool_calls.Count -gt 0) {
                         $toolCall = $lastStep.tool_calls[0]
                         $toolName = if ($toolCall.name) { $toolCall.name.ToString() } else { "" }
@@ -364,11 +538,20 @@ switch ($agentState) {
                                             }
                                         }
                                         if ($isAsk) {
-                                            $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
+                                            $hasWorker = $false
+                                            if ($agyProc -and ([System.Management.Automation.PSTypeName]'FastProcFinder').Type) {
+                                                try { $hasWorker = [FastProcFinder]::HasActiveWorker($agyProc.Id, $PID) } catch {}
+                                            }
+                                            if ($hasWorker) {
+                                                $statusIndicator = if ($USE_TEXT_STATUS) { "[WORKING]" } else { "⚙️" }
+                                            } else {
+                                                $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
+                                            }
                                         } else {
                                             $isAllow = $false
                                             if ($perms.allow) {
                                                 foreach ($rule in $perms.allow) {
+                                                    if ($rule -eq "command(*)" -or $rule -eq "*") { $isAllow = $true; break }
                                                     if ($rule -match '^command\(regex:(.*)\)$') {
                                                         try {
                                                             if ($cmd -match $matches[1]) { $isAllow = $true; break }
@@ -377,7 +560,15 @@ switch ($agentState) {
                                                 }
                                             }
                                             if (-not $isAllow) {
-                                                $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
+                                                $hasWorker = $false
+                                                if ($agyProc -and ([System.Management.Automation.PSTypeName]'FastProcFinder').Type) {
+                                                    try { $hasWorker = [FastProcFinder]::HasActiveWorker($agyProc.Id, $PID) } catch {}
+                                                }
+                                                if ($hasWorker) {
+                                                    $statusIndicator = if ($USE_TEXT_STATUS) { "[WORKING]" } else { "⚙️" }
+                                                } else {
+                                                    $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
+                                                }
                                             }
                                         }
                                     } elseif ($toolName -in @("read_file", "write_file", "edit_file") -and $toolCall.args -and $toolCall.args.Path) {
@@ -405,41 +596,28 @@ switch ($agentState) {
         } catch {}
         break
     }
-    "idle" {
-        $statusIndicator = if ($USE_TEXT_STATUS) { "[READY]" } else { "⚪" }
-        # Clean / new workspace without any conversation history is ALWAYS Ready
-        if ($hasHistory -and $convId -and $markerPath -and (Test-Path $markerPath)) {
-            try {
-                $content = (Get-Content $markerPath -Raw -ErrorAction SilentlyContinue).Trim()
-                $parts = $content -split ":"
-                if ($parts.Count -ge 3 -and $agyProc) {
-                    $savedPid = $parts[0]
-                    $savedTicks = $parts[1]
-                    if ($agyProc.Id.ToString() -eq $savedPid -and $agyProc.StartTime.Ticks.ToString() -eq $savedTicks) {
-                        # Task completed in current process lifetime
-                        $statusIndicator = if ($USE_TEXT_STATUS) { "[DONE]" } else { "✅" }
-                        try { [System.IO.File]::WriteAllText($markerPath, "$($agyProc.Id):$($agyProc.StartTime.Ticks):COMPLETED", [System.Text.Encoding]::UTF8) } catch {}
+    default { # Covers 'idle' and any unknown inactive state
+        if ($activeSubagents -gt 0 -or $activeTasks -gt 0) {
+            $statusIndicator = if ($USE_TEXT_STATUS) { "[WORKING]" } else { "⚙️" }
+            if ($agyProc -and $markerPath) {
+                try { [System.IO.File]::WriteAllText($markerPath, "$($agyProc.Id):$($agyProc.StartTime.Ticks):RUNNING", [System.Text.Encoding]::UTF8) } catch {}
+            }
+        } else {
+            $statusIndicator = if ($USE_TEXT_STATUS) { "[READY]" } else { "⚪" }
+            if ($hasHistory -and $convId -and $markerPath -and (Test-Path $markerPath)) {
+                try {
+                    $content = (Get-Content $markerPath -Raw -ErrorAction SilentlyContinue).Trim()
+                    $parts = $content -split ":"
+                    if ($parts.Count -ge 3 -and $agyProc) {
+                        $savedPid = $parts[0]
+                        $savedTicks = $parts[1]
+                        if ($agyProc.Id.ToString() -eq $savedPid -and $agyProc.StartTime.Ticks.ToString() -eq $savedTicks) {
+                            $statusIndicator = if ($USE_TEXT_STATUS) { "[DONE]" } else { "✅" }
+                            try { [System.IO.File]::WriteAllText($markerPath, "$($agyProc.Id):$($agyProc.StartTime.Ticks):COMPLETED", [System.Text.Encoding]::UTF8) } catch {}
+                        }
                     }
-                }
-            } catch {}
-        }
-        break
-    }
-    default {
-        $statusIndicator = if ($USE_TEXT_STATUS) { "[READY]" } else { "⚪" }
-        if ($hasHistory -and $convId -and $markerPath -and (Test-Path $markerPath)) {
-            try {
-                $content = (Get-Content $markerPath -Raw -ErrorAction SilentlyContinue).Trim()
-                $parts = $content -split ":"
-                if ($parts.Count -ge 3 -and $agyProc) {
-                    $savedPid = $parts[0]
-                    $savedTicks = $parts[1]
-                    if ($agyProc.Id.ToString() -eq $savedPid -and $agyProc.StartTime.Ticks.ToString() -eq $savedTicks) {
-                        $statusIndicator = if ($USE_TEXT_STATUS) { "[DONE]" } else { "✅" }
-                        try { [System.IO.File]::WriteAllText($markerPath, "$($agyProc.Id):$($agyProc.StartTime.Ticks):COMPLETED", [System.Text.Encoding]::UTF8) } catch {}
-                    }
-                }
-            } catch {}
+                } catch {}
+            }
         }
         break
     }

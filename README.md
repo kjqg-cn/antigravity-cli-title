@@ -41,11 +41,11 @@ Existing solutions (like bottom statuslines) only work when the window is in the
 
 - **🎯 Complete 4-State Machine**:
   - `⚪ Ready`: Clean initial state after launching or reopening a historical conversation.
-  - `⚙️ Working`: Actively thinking, reading files, or executing background tools.
-  - `⚠️ Waiting`: Interactively waiting for user input (`ask_question`) or permission approvals (`permissions.ask`).
-  - `✅ Completed`: Remains marked as done after outputting the final response until new input is submitted.
+  - `⚙️ Working`: Actively thinking, reading files, executing commands, background tasks (Tasks), or subagents (Subagents).
+  - `⚠️ Waiting`: Interactively waiting for user input (`ask_question`) or permission approvals (`permissions.ask`, returns to Working once authorized).
+  - `✅ Completed`: Remains marked as done after outputting the final response and all background tasks/subagents finish.
 - **⚡ Background & Interruption Awareness**:
-  - Deep-parses `transcript.jsonl` tails and `settings.json` permission rules to distinguish between normal tool execution and authorization prompts.
+  - Deep-parses `transcript.jsonl` tails and `settings.json` permission rules, linking active tasks/subagents and native process trees to accurately distinguish running jobs from authorization prompts.
 - **🪟 Multi-Window Isolation**:
   - Binds conversation IDs with active CLI process lifecycles. Zero cross-window state pollution.
 - **🏷️ Intelligent Title Hierarchy**:
