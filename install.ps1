@@ -74,7 +74,7 @@ if ($MaxLength -ne 35) { $scriptArgs += "--max-length $MaxLength" }
 
 $argsPart = if ($scriptArgs.Count -gt 0) { " " + ($scriptArgs -join " ") } else { "" }
 $destPathNormalized = $destFile -replace '\\', '/'
-$titleCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$destPathNormalized`"$argsPart"
+$titleCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $destPathNormalized$argsPart"
 
 # 3. Update settings.json
 $settingsDir = Join-Path $homeDir ".gemini\antigravity-cli"
@@ -90,7 +90,8 @@ if (Test-Path $settingsPath) {
         $raw = Get-Content -Raw -Path $settingsPath -Encoding UTF8
         # Backup original
         $bakPath = Join-Path $settingsDir "settings.json.bak"
-        [System.IO.File]::WriteAllText($bakPath, $raw, [System.Text.Encoding]::UTF8)
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($bakPath, $raw, $utf8NoBom)
         Write-Host "[+] Backup saved to: $bakPath" -ForegroundColor Gray
         
         $settingsObj = ConvertFrom-Json $raw -ErrorAction Stop
@@ -115,8 +116,67 @@ if ($settingsObj -is [PSCustomObject] -or $settingsObj -is [System.Collections.I
     }
 }
 
-$updatedJson = $settingsObj | ConvertTo-Json -Depth 10
-[System.IO.File]::WriteAllText($settingsPath, $updatedJson, [System.Text.Encoding]::UTF8)
+function Format-CleanJson([string]$json, [int]$indent = 2) {
+    $indentStr = " " * $indent
+    $level = 0
+    $inString = $false
+    $escape = $false
+    $sb = [System.Text.StringBuilder]::new()
+
+    for ($i = 0; $i -lt $json.Length; $i++) {
+        $c = $json[$i]
+        if ($escape) {
+            [void]$sb.Append($c)
+            $escape = $false
+            continue
+        }
+        if ($c -eq [char]92) {
+            [void]$sb.Append($c)
+            if ($inString) { $escape = $true }
+            continue
+        }
+        if ($c -eq [char]34) {
+            [void]$sb.Append($c)
+            $inString = -not $inString
+            continue
+        }
+        if ($inString) {
+            [void]$sb.Append($c)
+            continue
+        }
+        if ($c -eq ' ' -or $c -eq "`t" -or $c -eq "`r" -or $c -eq "`n") { continue }
+
+        if ($c -eq '{' -or $c -eq '[') {
+            [void]$sb.Append($c)
+            $level++
+            [void]$sb.AppendLine()
+            [void]$sb.Append($indentStr * $level)
+        }
+        elseif ($c -eq '}' -or $c -eq ']') {
+            $level = [Math]::Max(0, $level - 1)
+            [void]$sb.AppendLine()
+            [void]$sb.Append($indentStr * $level)
+            [void]$sb.Append($c)
+        }
+        elseif ($c -eq ',') {
+            [void]$sb.Append($c)
+            [void]$sb.AppendLine()
+            [void]$sb.Append($indentStr * $level)
+        }
+        elseif ($c -eq ':') {
+            [void]$sb.Append(': ')
+        }
+        else {
+            [void]$sb.Append($c)
+        }
+    }
+    $res = $sb.ToString()
+    return ($res -replace '\{\s*\}', '{}' -replace '\[\s*\]', '[]' -replace '\\u0027', "'" -replace '\\u003c', '<' -replace '\\u003e', '>' -replace '\\u0026', '&')
+}
+
+$updatedJson = Format-CleanJson ($settingsObj | ConvertTo-Json -Depth 10) 2
+if (-not $utf8NoBom) { $utf8NoBom = New-Object System.Text.UTF8Encoding($false) }
+[System.IO.File]::WriteAllText($settingsPath, $updatedJson, $utf8NoBom)
 Write-Host "[+] Successfully configured 'title' in: $settingsPath" -ForegroundColor Green
 
 Write-Host "`n$eSparkles Installation complete!" -ForegroundColor Cyan
