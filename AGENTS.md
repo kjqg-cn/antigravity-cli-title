@@ -27,6 +27,8 @@ A lightweight, zero-latency 4-state lifecycle state machine mapped directly to t
 ```
 antigravity-cli-title/
 ├── .github/workflows/ci.yml     # AST syntax verification CI
+├── docs/
+│   └── demo.gif                 # 4-state lifecycle demonstration animation
 ├── scripts/
 │   ├── title.ps1                # Windows native renderer (PowerShell 5.1+ & 7+)
 │   └── title.sh                 # Linux / macOS native renderer (POSIX Bash)
@@ -132,8 +134,8 @@ Write-Host "All PowerShell scripts passed AST checks." -ForegroundColor Green
 This project is actively maintained and evolved by the user. Future agents should treat the following features as ongoing engineering priorities:
 
 ### 5.1 Immediate Next Steps (v0.1.0 Release)
-- [ ] **Demo GIF / Screenshots**: Record an animated GIF or SVG terminal capture showing the 4-state lifecycle progression to embed in `README.md`.
-- [ ] **GitHub Initial Commit & Push**:
+- [x] **Demo GIF / Screenshots**: Record an animated GIF or SVG terminal capture showing the 4-state lifecycle progression to embed in `README.md`.
+- [x] **GitHub Initial Commit & Push**:
   - `git add .`
   - `git commit -m "feat: initial commit for antigravity-cli-title"`
   - Link with remote GitHub repository and push to `main`.
