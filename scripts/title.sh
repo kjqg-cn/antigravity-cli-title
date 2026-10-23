@@ -162,7 +162,7 @@ case "$STATE" in
 
         # Check for ask_question or permissions.ask
         if [[ -f "$TRANSCRIPT_PATH" ]]; then
-            IS_ASK=$(tail -n 30 "$TRANSCRIPT_PATH" | python3 -c '
+            IS_ASK=$(tail -n 200 "$TRANSCRIPT_PATH" | python3 -c '
 import json, sys
 lines = [l.strip() for l in sys.stdin if l.strip()]
 last_resp = None
@@ -175,11 +175,11 @@ for l in reversed(lines):
     except Exception:
         pass
 if last_resp:
-    tc = last_resp["tool_calls"][0]
-    name = tc.get("name", "")
-    if name in ["ask_question", "ask", "prompt_user", "get_confirmation", "request_feedback"]:
-        print("YES")
-        sys.exit(0)
+    for tc in last_resp.get("tool_calls", []):
+        name = tc.get("name", "")
+        if name in ["ask_question", "ask", "prompt_user", "get_confirmation", "request_feedback"]:
+            print("YES")
+            sys.exit(0)
 print("NO")
 ' 2>/dev/null || echo "NO")
 

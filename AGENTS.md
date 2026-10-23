@@ -71,14 +71,22 @@ Antigravity CLI does not send a `conversation_title` field in standard telemetry
    - Used only in fresh, unprompted workspaces (`hasHistory == false`), ensuring clean `⚪ Ready <cwd>` display.
 
 ### 2.4 Sub-Event Inspection (`ask_question` & Permissions)
-Under `agent_state == "tool_use"`, the script seeks the last 16KB of `transcript.jsonl` to locate the final `PLANNER_RESPONSE`:
-1. If tool name is `ask_question`, `ask`, `prompt_user`, etc. ➔ `⚠️ Waiting`.
-2. If tool name is `run_command` matching `permissions.ask` (or not in `permissions.allow`):
-   - Check if `agy.exe` already has an active worker child process (`FastProcFinder::HasActiveWorker`):
-     - If worker child exists (user confirmed, command executing) ➔ `⚙️ Working`.
-     - If no worker child exists (blocked on `[y/n]` interactive prompt) ➔ `⚠️ Waiting`.
-3. If tool name is sensitive file edit matching `permissions.ask` ➔ `⚠️ Waiting`.
-4. Otherwise ➔ `⚙️ Working`.
+Under `agent_state == "tool_use"`, the script seeks the last 128KB of `transcript.jsonl` to locate the active `PLANNER_RESPONSE` (skipping intermediate completed tool output frames like `type: "GENERIC"`):
+1. **Multi-Tool Batch Inspection**: Scans all tool calls in `tool_calls` array (not just index 0), ensuring any pending interactive approval blocks the turn into `⚠️ Waiting`.
+2. If tool name is `ask_question`, `ask`, `prompt_user`, `get_confirmation`, `request_feedback` ➔ `⚠️ Waiting`.
+3. If tool name is `run_command` matching `permissions.ask` (or not in `permissions.allow`):
+   - Supports both `command(regex:...)` and standard glob `command(...)` rules.
+   - Unescapes literal escape sequences (`\n`, `\r`, `\t`, `\"`) before regex matching.
+   - Check if `agy.exe` already has an active worker child process executing this command (`FastProcFinder::HasActiveWorker` with target command fingerprinting):
+     - If matching worker child exists (user confirmed, command executing) ➔ `⚙️ Working`.
+     - If no matching worker child exists (blocked on `[y/n]` interactive prompt, ignoring unrelated background tasks/MCP servers) ➔ `⚠️ Waiting`.
+4. If tool name is sensitive file operation (`read_file`, `write_file`, `edit_file`) matching `permissions.ask`:
+   - Normalizes Windows `\` and Unix `/` separators across path arguments and permission rules.
+   - Matches relative paths outside current workspace against parent rules (e.g. `../*`).
+   - ➔ `⚠️ Waiting`.
+5. If tool name is an MCP tool or custom extension matching `permissions.ask` ➔ `⚠️ Waiting`.
+6. Background tasks/subagents do NOT override foreground permission prompts: even with active background jobs, pending user approvals are faithfully presented as `⚠️ Waiting`.
+7. Otherwise ➔ `⚙️ Working`.
 
 ---
 

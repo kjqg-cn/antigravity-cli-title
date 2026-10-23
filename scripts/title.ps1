@@ -254,6 +254,10 @@ public static class FastProcFinder {
     }
 
     public static bool HasActiveWorker(int agyPid, int currentPid) {
+        return HasActiveWorker(agyPid, currentPid, "");
+    }
+
+    public static bool HasActiveWorker(int agyPid, int currentPid, string targetCmd) {
         if (agyPid <= 0) return false;
 
         var selfAncestors = new System.Collections.Generic.HashSet<int>();
@@ -266,6 +270,15 @@ public static class FastProcFinder {
 
         IntPtr snap = CreateToolhelp32Snapshot(2, 0);
         if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return false;
+
+        string cleanedTarget = (targetCmd ?? "").Trim().ToLowerInvariant();
+        string[] targetTokens = null;
+        if (!string.IsNullOrEmpty(cleanedTarget)) {
+            var parts = cleanedTarget.Split(new char[] { ' ', '\t', '\r', '\n', '"', '\'' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 0) {
+                targetTokens = parts;
+            }
+        }
 
         try {
             PROCESSENTRY32 entry = new PROCESSENTRY32();
@@ -284,12 +297,26 @@ public static class FastProcFinder {
                             continue;
                         }
 
-                        if (!string.IsNullOrEmpty(cmd)) {
-                            return true;
+                        if (string.IsNullOrEmpty(cmd)) {
+                            if (targetTokens == null && exe != "cmd.exe" && exe != "powershell.exe" && exe != "pwsh.exe" && exe.Length > 0) {
+                                return true;
+                            }
+                            continue;
                         }
 
-                        // Fallback: if cmd is restricted, non-shell binaries represent active commands
-                        if (exe != "cmd.exe" && exe != "powershell.exe" && exe != "pwsh.exe" && exe.Length > 0) {
+                        if (targetTokens != null && targetTokens.Length > 0) {
+                            if (cmd.Contains(cleanedTarget)) {
+                                return true;
+                            }
+                            int matchCount = 0;
+                            int checkCount = Math.Min(3, targetTokens.Length);
+                            for (int t = 0; t < checkCount; t++) {
+                                if (cmd.Contains(targetTokens[t])) matchCount++;
+                            }
+                            if (matchCount >= Math.Min(2, checkCount)) {
+                                return true;
+                            }
+                        } else {
                             return true;
                         }
                     }
@@ -478,7 +505,7 @@ switch ($agentState) {
             if ($transcriptPath -and (Test-Path $transcriptPath)) {
                 $fs = [System.IO.File]::Open($transcriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
                 $len = $fs.Length
-                $readLen = [Math]::Min(16384, $len)
+                $readLen = [Math]::Min(131072, $len)
                 if ($readLen -gt 0) {
                     $fs.Seek(-$readLen, [System.IO.SeekOrigin]::End) | Out-Null
                     $buf = New-Object byte[] $readLen
@@ -492,101 +519,153 @@ switch ($agentState) {
                         $rawLine = ($tailLines[$i].ToString().Trim() -replace '^\uFEFF', '').Trim()
                         if ($rawLine.StartsWith("{") -and $rawLine.EndsWith("}")) {
                             $parsed = ConvertFrom-Json $rawLine -ErrorAction SilentlyContinue
-                            if ($parsed -and $parsed.type) {
-                                $lastStep = $parsed
-                                break
+                            if ($parsed) {
+                                if ($parsed.type -eq "PLANNER_RESPONSE") {
+                                    $lastStep = $parsed
+                                    break
+                                }
+                                if ($parsed.type -eq "USER_INPUT") {
+                                    break
+                                }
                             }
                         }
                     }
                     
-                    # If background tasks or subagents are running, keep WORKING unless actively prompting with ask_question
-                    if ($activeTasks -gt 0 -or $activeSubagents -gt 0) {
-                        $isAskPrompt = $false
-                        if ($lastStep -and $lastStep.type -eq "PLANNER_RESPONSE" -and $lastStep.tool_calls -and $lastStep.tool_calls.Count -gt 0) {
-                            $tName = if ($lastStep.tool_calls[0].name) { $lastStep.tool_calls[0].name.ToString() } else { "" }
-                            if ($tName -in @("ask_question", "ask", "prompt_user", "get_confirmation", "request_feedback")) {
-                                $isAskPrompt = $true
-                            }
-                        }
-                        if (-not $isAskPrompt) {
-                            break
-                        }
-                    }
-
                     if ($lastStep -and $lastStep.type -eq "PLANNER_RESPONSE" -and $lastStep.tool_calls -and $lastStep.tool_calls.Count -gt 0) {
-                        $toolCall = $lastStep.tool_calls[0]
-                        $toolName = if ($toolCall.name) { $toolCall.name.ToString() } else { "" }
-                        
-                        if ($toolName -in @("ask_question", "ask", "prompt_user", "get_confirmation", "request_feedback")) {
-                            $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
-                        } else {
-                            $settingsPath = Join-Path $homeDir ".gemini\antigravity-cli\settings.json"
-                            if (Test-Path $settingsPath) {
-                                $settingsObj = Get-Content $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction SilentlyContinue
-                                if ($settingsObj -and $settingsObj.permissions) {
-                                    $perms = $settingsObj.permissions
-                                    if ($toolName -eq "run_command" -and $toolCall.args -and $toolCall.args.CommandLine) {
-                                        $cmd = $toolCall.args.CommandLine.ToString()
-                                        $isAsk = $false
-                                        if ($perms.ask) {
-                                            foreach ($rule in $perms.ask) {
-                                                if ($rule -match '^command\(regex:(.*)\)$') {
-                                                    try {
-                                                        if ($cmd -match $matches[1]) { $isAsk = $true; break }
-                                                    } catch {}
-                                                }
-                                            }
-                                        }
-                                        if ($isAsk) {
-                                            $hasWorker = $false
-                                            if ($agyProc -and ([System.Management.Automation.PSTypeName]'FastProcFinder').Type) {
-                                                try { $hasWorker = [FastProcFinder]::HasActiveWorker($agyProc.Id, $PID) } catch {}
-                                            }
-                                            if ($hasWorker) {
-                                                $statusIndicator = if ($USE_TEXT_STATUS) { "[WORKING]" } else { "⚙️" }
-                                            } else {
-                                                $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
-                                            }
-                                        } else {
-                                            $isAllow = $false
-                                            if ($perms.allow) {
-                                                foreach ($rule in $perms.allow) {
-                                                    if ($rule -eq "command(*)" -or $rule -eq "*") { $isAllow = $true; break }
-                                                    if ($rule -match '^command\(regex:(.*)\)$') {
-                                                        try {
-                                                            if ($cmd -match $matches[1]) { $isAllow = $true; break }
-                                                        } catch {}
-                                                    }
-                                                }
-                                            }
-                                            if (-not $isAllow) {
-                                                $hasWorker = $false
-                                                if ($agyProc -and ([System.Management.Automation.PSTypeName]'FastProcFinder').Type) {
-                                                    try { $hasWorker = [FastProcFinder]::HasActiveWorker($agyProc.Id, $PID) } catch {}
-                                                }
-                                                if ($hasWorker) {
-                                                    $statusIndicator = if ($USE_TEXT_STATUS) { "[WORKING]" } else { "⚙️" }
-                                                } else {
-                                                    $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
-                                                }
-                                            }
-                                        }
-                                    } elseif ($toolName -in @("read_file", "write_file", "edit_file") -and $toolCall.args -and $toolCall.args.Path) {
-                                        $fPath = $toolCall.args.Path.ToString()
-                                        if ($perms.ask) {
-                                            foreach ($rule in $perms.ask) {
-                                                if ($rule -match '^' + $toolName + '\((.*)\)$') {
-                                                    $pat = [regex]::Escape($matches[1]) -replace '\\\*', '.*'
-                                                    if ($fPath -match $pat) { 
-                                                        $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
-                                                        break 
-                                                    }
-                                                }
+                        $settingsPath = Join-Path $homeDir ".gemini\antigravity-cli\settings.json"
+                        $settingsObj = $null
+                        if (Test-Path $settingsPath) {
+                            $settingsObj = Get-Content $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction SilentlyContinue
+                        }
+                        $perms = if ($settingsObj -and $settingsObj.permissions) { $settingsObj.permissions } else { $null }
+
+                        $isWaitingForUser = $false
+
+                        foreach ($toolCall in $lastStep.tool_calls) {
+                            $toolName = if ($toolCall.name) { $toolCall.name.ToString() } else { "" }
+
+                            # 1. Interactive prompt tools (ask_question, etc.)
+                            if ($toolName -in @("ask_question", "ask", "prompt_user", "get_confirmation", "request_feedback")) {
+                                $isWaitingForUser = $true
+                                break
+                            }
+
+                            if ($perms) {
+                                if ($toolName -eq "run_command" -and $toolCall.args -and $toolCall.args.CommandLine) {
+                                    $cmd = $toolCall.args.CommandLine.ToString()
+                                    # Unescape literal escape sequences so regex word boundaries match correctly
+                                    $cmd = $cmd -replace '\\n', "`n" -replace '\\r', "`r" -replace '\\t', "`t" -replace '\\"', '"'
+                                    
+                                    $isAsk = $false
+                                    if ($perms.ask) {
+                                        foreach ($rule in $perms.ask) {
+                                            if ($rule -match '^command\(regex:(.*)\)$') {
+                                                try { if ($cmd -match $matches[1]) { $isAsk = $true; break } } catch {}
+                                            } elseif ($rule -match '^command\((.*)\)$') {
+                                                $glob = $matches[1]
+                                                $escaped = [regex]::Escape($glob) -replace '\\\*', '.*' -replace '\\\?', '.'
+                                                $pat = '(?i)^' + $escaped + '$'
+                                                $patSub = '(?i)(?:^|\s)' + $escaped + '$'
+                                                try { if ($cmd -match $pat -or $cmd -match $patSub) { $isAsk = $true; break } } catch {}
                                             }
                                         }
                                     }
+
+                                    if ($isAsk) {
+                                        $hasWorker = $false
+                                        if ($agyProc -and ([System.Management.Automation.PSTypeName]'FastProcFinder').Type) {
+                                            try { $hasWorker = [FastProcFinder]::HasActiveWorker($agyProc.Id, $PID, $cmd) } catch {}
+                                        }
+                                        if (-not $hasWorker) {
+                                            $isWaitingForUser = $true
+                                            break
+                                        }
+                                    } else {
+                                        $isAllow = $false
+                                        if ($perms.allow) {
+                                            foreach ($rule in $perms.allow) {
+                                                if ($rule -eq "command(*)" -or $rule -eq "*") { $isAllow = $true; break }
+                                                if ($rule -match '^command\(regex:(.*)\)$') {
+                                                    try { if ($cmd -match $matches[1]) { $isAllow = $true; break } } catch {}
+                                                } elseif ($rule -match '^command\((.*)\)$') {
+                                                    $glob = $matches[1]
+                                                    $escaped = [regex]::Escape($glob) -replace '\\\*', '.*' -replace '\\\?', '.'
+                                                    $pat = '(?i)^' + $escaped + '$'
+                                                    $patSub = '(?i)(?:^|\s)' + $escaped + '$'
+                                                    try { if ($cmd -match $pat -or $cmd -match $patSub) { $isAllow = $true; break } } catch {}
+                                                }
+                                            }
+                                        }
+                                        if (-not $isAllow) {
+                                            $hasWorker = $false
+                                            if ($agyProc -and ([System.Management.Automation.PSTypeName]'FastProcFinder').Type) {
+                                                try { $hasWorker = [FastProcFinder]::HasActiveWorker($agyProc.Id, $PID, $cmd) } catch {}
+                                            }
+                                            if (-not $hasWorker) {
+                                                $isWaitingForUser = $true
+                                                break
+                                            }
+                                        }
+                                    }
+                                } elseif ($toolName -in @("read_file", "write_file", "edit_file") -and $toolCall.args -and $toolCall.args.Path) {
+                                    $fPath = $toolCall.args.Path.ToString()
+                                    $normPath = $fPath -replace '\\', '/'
+                                    if ($perms.ask) {
+                                        foreach ($rule in $perms.ask) {
+                                            if ($rule -match '^' + $toolName + '\((.*)\)$') {
+                                                $ruleInner = $matches[1]
+                                                if ($ruleInner -match '^regex:(.*)$') {
+                                                    try {
+                                                        if ($normPath -match $matches[1] -or $fPath -match $matches[1]) {
+                                                            $isWaitingForUser = $true
+                                                            break
+                                                        }
+                                                    } catch {}
+                                                } else {
+                                                    $normRule = $ruleInner -replace '\\', '/'
+                                                    $escaped = [regex]::Escape($normRule) -replace '\\\*', '.*' -replace '\\\?', '.'
+                                                    $pat = '(?i)^' + $escaped + '$'
+                                                    $patSub = '(?i)(?:^|/)' + $escaped + '$'
+                                                    if ($normPath -match $pat -or $normPath -match $patSub -or $fPath -match $pat) {
+                                                        $isWaitingForUser = $true
+                                                        break
+                                                    }
+                                                    if ($normRule -match '^\.\./' -and $data.cwd) {
+                                                        $normCwd = ($data.cwd -replace '\\', '/').TrimEnd('/')
+                                                        if (-not $normPath.StartsWith($normCwd, [System.StringComparison]::OrdinalIgnoreCase)) {
+                                                            $isWaitingForUser = $true
+                                                            break
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if ($isWaitingForUser) { break }
+                                    }
+                                } else {
+                                    if ($perms.ask) {
+                                        foreach ($rule in $perms.ask) {
+                                            $ruleTool = ($rule -replace '\(.*$', '').Trim()
+                                            if ($ruleTool -eq $toolName -or $rule -eq "*") {
+                                                $isWaitingForUser = $true
+                                                break
+                                            }
+                                            if ($ruleTool -match '\*') {
+                                                $pat = '(?i)^' + ([regex]::Escape($ruleTool) -replace '\\\*', '.*') + '$'
+                                                if ($toolName -match $pat) {
+                                                    $isWaitingForUser = $true
+                                                    break
+                                                }
+                                            }
+                                        }
+                                        if ($isWaitingForUser) { break }
+                                    }
                                 }
                             }
+                        }
+
+                        if ($isWaitingForUser) {
+                            $statusIndicator = if ($USE_TEXT_STATUS) { "[WAITING]" } else { "⚠️" }
                         }
                     }
                 } else {
