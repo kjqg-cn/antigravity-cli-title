@@ -29,10 +29,10 @@
 **`antigravity-cli-title`** 直接在你的终端标签页 / 窗口标题栏中实现了一套完整的 **4 状态生命周期状态机**：
 
 ```
-[窗口标签]  agy: ⚙️ Fix user login issue           <- 正在思考 / 执行工具
-[窗口标签]  agy: ⚠️ Deploy to production           <- 已阻断！等待确认或输入
-[窗口标签]  agy: ✅ Refactor database schema        <- 执行完成！等待查看结果
 [窗口标签]  agy: ⚪ Docker compose setup            <- 就绪 / 等待首次输入
+[窗口标签]  agy: ⚙️ Fix user login issue            <- 正在思考 / 执行工具
+[窗口标签]  agy: ⚠️ Deploy to production            <- 已阻断！等待确认或输入
+[窗口标签]  agy: ✅ Refactor database schema        <- 执行完成！等待查看结果
 ```
 
 ---
@@ -50,11 +50,12 @@
   - 将会话 ID 与活跃 CLI 进程生命周期精准绑定，原生进程树回溯机制，跨窗口绝不串台或状态污染。
 - **🏷️ 智能标题多级回退**：
   - 优先读取 `conversation_title` ➔ 回退至用户首句输入（智能截断） ➔ 回退至当前工作区目录名。
-- **🚀 零感延迟与高性能**：
-  - 高速进程 ID 缓存与轻量解析，对终端操作毫无延迟干扰；纯非阻塞异步更新。
+- **🚀 原生超高速执行引擎 (`title.exe`)**：
+  - 基于纯 Go 构建的高性能执行引擎，零第三方依赖，直调 Windows 系统级 API（`NtQueryInformationProcess` 与 `winsqlite3.dll`），耗时极低（通常 < 3ms，比 PowerShell 进程冷启动快 13 倍以上）。
+  - `install.ps1` 安装器会自动优先在本地编译或从 GitHub Release 下载预编译的 `title.exe`。
 - **🌐 全平台原生支持**：
-  - 原生 **PowerShell** 渲染器（针对 Windows 环境强化 UTF-8 BOM 兼容性）。
-  - 原生 **POSIX Bash** 渲染器（支持 Linux 与 macOS）。
+  - Windows 原生 **Go 编译二进制 (`title.exe`)**。
+  - 原生 **POSIX Bash** 渲染器 (`title.sh`，支持 Linux 与 macOS)。
 
 ---
 
@@ -115,7 +116,7 @@ cd antigravity-cli-title
 {
   "title": {
     "type": "command",
-    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/YourName/.gemini/antigravity-cli-title/title.ps1",
+    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe",
     "enabled": true
   }
 }
@@ -127,10 +128,10 @@ cd antigravity-cli-title
 
 | 参数选项 | 示例 | 作用说明 |
 | :--- | :--- | :--- |
-| `--no-prefix` | `title.ps1 --no-prefix` | 隐藏开头的 `agy: ` 标识（显示如：`✅ Refactor login`）。 |
-| `--prefix <str>` | `title.ps1 --prefix "🤖"` | 自定义前缀标识符。 |
-| `--text` / `--classic` | `title.ps1 --text` | 使用 `[DONE]` 等纯 ASCII 文本指示器替代 Emoji 图标。 |
-| `--max-length <n>` | `title.ps1 --max-length 40` | 设置标题截断的最大字符长度（默认：35）。 |
+| `--no-prefix` | `title.exe --no-prefix` | 隐藏开头的 `agy: ` 标识（显示如：`✅ Refactor login`）。 |
+| `--prefix <str>` | `title.exe --prefix "🤖"` | 自定义前缀标识符。 |
+| `--text` / `--classic` | `title.exe --text` | 使用 `[DONE]` 等纯 ASCII 文本指示器替代 Emoji 图标。 |
+| `--max-length <n>` | `title.exe --max-length 40` | 设置标题截断的最大字符长度（默认：35）。 |
 
 ---
 

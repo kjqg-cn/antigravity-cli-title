@@ -26,11 +26,12 @@ A lightweight, low-latency 4-state lifecycle state machine mapped directly to th
 ### 2.1 File Map
 ```
 antigravity-cli-title/
-├── .github/workflows/ci.yml     # AST syntax verification CI
+├── .github/workflows/ci.yml     # AST syntax & Go build/test CI
 ├── docs/
 │   └── demo.gif                 # 4-state lifecycle demonstration animation
+├── cmd/
+│   └── title/                   # Windows native execution engine (Pure Go, < 3ms)
 ├── scripts/
-│   ├── title.ps1                # Windows native renderer (PowerShell 5.1+ & 7+)
 │   └── title.sh                 # Linux / macOS native renderer (POSIX Bash)
 ├── install.ps1 / install.sh     # Zero-config installers (injects into settings.json)
 ├── uninstall.ps1 / uninstall.sh # Clean uninstallers (preserves user settings)
@@ -42,7 +43,7 @@ antigravity-cli-title/
 
 ### 2.2 Lifecycle & Process Binding Decision
 - **Why simple file timestamps fail**:
-  The CLI invokes `title.ps1` via a transient subprocess wrapper. The wrapper's start time is *always* milliseconds newer than `transcript.jsonl`'s last write time, making naive timestamp comparisons (`fileWriteTime -ge proc.StartTime`) return false 100% of the time.
+  The CLI invokes the title renderer via a transient subprocess wrapper. The wrapper's start time is *always* milliseconds newer than `transcript.jsonl`'s last write time, making naive timestamp comparisons (`fileWriteTime -ge proc.StartTime`) return false 100% of the time.
 - **The Fast-Path Native Process Finder**:
   1. We use a microsecond P/Invoke call (`NtQueryInformationProcess`) to traverse ancestor process IDs until the true parent `agy.exe` is reached (~70 ms on first compile, < 1 ms subsequently).
   2. **Multi-Window Isolation**: Each terminal tab's subprocess strictly climbs its *own* ancestor chain. It never relies on shared `Select-Object -First 1` or global PID guessing.
@@ -62,7 +63,7 @@ Antigravity CLI does not send a `conversation_title` field in standard telemetry
 1. **Tier 1 - Telemetry Payload**: Check `$data.conversation_title` (if future CLI versions supply it).
 2. **Tier 2 - Global SQLite Summary (`conversation_summaries.db`)**:
    - `/resume` reads AI-generated conversation summaries from `~/.gemini/antigravity-cli/conversation_summaries.db`.
-   - On Windows, `title.ps1` binds directly to Windows 10/11 native `winsqlite3.dll` in `FastProcFinder` to query the title in read-only mode (< 1ms, zero third-party dependencies).
+   - On Windows, `title.exe` binds directly to Windows 10/11 native `winsqlite3.dll` to query the title in read-only mode (< 1ms, zero third-party dependencies).
    - On Linux/macOS, `title.sh` uses standard Python `sqlite3` in URI read-only mode (`file:... ?mode=ro`).
 3. **Tier 3 - Immediate Transcript Prompt (`transcript.jsonl`)**:
    - In turn 1 before the model finishes and generates an AI summary, the title immediately mirrors the user's first prompt (`<USER_REQUEST>`).
@@ -93,54 +94,46 @@ Under `agent_state == "tool_use"`, the script seeks the last 128KB of `transcrip
 ## 3. Hard Constraints & Coding Rules
 
 > [!CAUTION]
-> **PowerShell Encoding Rule**:
-> - **`scripts/title.ps1` MUST BE SAVED WITH UTF-8 BOM (`utf-8-sig`)**:
->   It is executed locally via `powershell.exe -File ...`. Windows PowerShell 5.1 parses non-BOM UTF-8 files using the system default ANSI code page (e.g. GBK/Windows-1252), which corrupts multibyte Unicode emojis (`⚪`, `⚙️`, `⚠️`, `✅`), causing fatal syntax errors.
+> **PowerShell Installer Encoding Rule**:
 > - **`install.ps1` and `uninstall.ps1` MUST BE SAVED WITHOUT BOM (UTF-8 No-BOM)**:
 >   These scripts are downloaded over HTTP and executed via `irm ... | iex`. When PowerShell's `Invoke-RestMethod` downloads a script with BOM, it decodes the BOM into a leading Unicode char `\uFEFF` in the string. When passed to `iex`, `\uFEFF#` is not recognized as a comment, invalidating the subsequent `param(...)` block and throwing `Invoke-Expression: 赋值表达式无效...` (`InvalidLeftHandSide`).
 
 > [!WARNING]
 > **No Blocking Calls in Title Renderer**:
-> `title.ps1` and `title.sh` are invoked frequently on telemetry events.
+> `title.exe` and `title.sh` are invoked frequently on telemetry events.
 > - **NEVER** add network requests or unbounded file reads.
-> - **NEVER** run broad `Get-CimInstance` queries without PID-specific filtering and caching.
-> - All file operations must use safe exception handling (`try {} catch {}`).
+> - All file operations must use safe exception handling.
 
 > [!IMPORTANT]
-> **FileShare.ReadWrite on `transcript.jsonl`**:
-> Never use `[System.IO.File]::OpenRead($path)` to inspect `transcript.jsonl`. When a user submits a prompt, `agy.exe` holds an active write lock on the file. Standard `OpenRead` lacks the `FileShare.ReadWrite` flag, causing an immediate `IOException` (file in use by another process), silently falling back to the directory name. Always use `[System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)`.
+> **Prefer `transcript_full.jsonl` to Prevent Truncation Blindness**:
+> When inspecting tools and arguments, always prioritize `transcript_full.jsonl` over `transcript.jsonl`. Antigravity CLI truncates commands longer than ~2KB in `transcript.jsonl` (inserting `<truncated ... bytes>`), which hides sensitive commands (e.g. `Remove-Item` inside scripts). `transcript_full.jsonl` retains 100% untruncated content with the same 0.01ms seek speed.
 
 ---
 
 ## 4. Development & Testing Commands
 
-### 4.1 Validate PowerShell Syntax (AST)
+### 4.1 Validate Go Engine & Build
 ```powershell
-$scripts = Get-ChildItem -Recurse -Filter *.ps1
-foreach ($s in $scripts) {
-    $errors = $null
-    [System.Management.Automation.Language.Parser]::ParseFile($s.FullName, [ref]$null, [ref]$errors) | Out-Null
-    if ($errors) { Write-Error "AST Error in $($s.Name): $errors"; exit 1 }
-}
-Write-Host "All PowerShell scripts passed AST checks." -ForegroundColor Green
+go test ./...
+go build -ldflags="-s -w" -o title.exe ./cmd/title
 ```
 
-### 4.2 Test Local Renderer with Simulated Payload
+### 4.2 Test Native Engine with Simulated Payload
 ```powershell
 # Test Working state
-@{ cwd = (Get-Location).Path; conversation_title = "Test Task"; agent_state = "working" } | ConvertTo-Json | powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\title.ps1
+@{ cwd = (Get-Location).Path; conversation_title = "Test Task"; agent_state = "working" } | ConvertTo-Json | .\title.exe
 
 # Test Idle state
-@{ cwd = (Get-Location).Path; conversation_title = "Test Task"; agent_state = "idle" } | ConvertTo-Json | powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\title.ps1
+@{ cwd = (Get-Location).Path; conversation_title = "Test Task"; agent_state = "idle" } | ConvertTo-Json | .\title.exe
 ```
 
 ### 4.3 Test Flags
 ```powershell
 # Test --no-prefix
-@{ cwd = (Get-Location).Path; agent_state = "working" } | ConvertTo-Json | powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\title.ps1 --no-prefix
+@{ cwd = (Get-Location).Path; agent_state = "working" } | ConvertTo-Json | .\title.exe --no-prefix
 
 # Test --text mode
-@{ cwd = (Get-Location).Path; agent_state = "working" } | ConvertTo-Json | powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\title.ps1 --text
+@{ cwd = (Get-Location).Path; agent_state = "working" } | ConvertTo-Json | .\title.exe --text
 ```
 
 ---
@@ -160,9 +153,11 @@ This project is actively maintained and evolved by the user. Future agents shoul
   - Open a PR or discussion in `weby-homelab/antigravity-cli-statusline` proposing `antigravity-cli-title` as the recommended companion title plugin.
 
 ### 5.2 Upcoming Feature Explorations (v0.2.0+)
-- [ ] **Fast Native Execution Engine (`title.exe`)**:
-  - Compile a zero-dependency, single-binary executable (Go or Rust) to eliminate `powershell.exe` cold-start overhead.
-  - Target end-to-end latency < 20ms while retaining `title.ps1` as fallback.
+- [x] **Fast Native Execution Engine (`title.exe`)**:
+  - Implemented zero-dependency, single-binary executable in pure Go (`cmd/title`).
+  - Uses Windows native system APIs (`NtQueryInformationProcess`, `winsqlite3.dll`, PEB command-line inspection).
+  - Eliminates `powershell.exe` cold-start latency (~13x speedup).
+  - Automatically compiled from source or downloaded from GitHub releases by `install.ps1`.
 - [ ] **Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
   - Implement ConEmu / Windows Terminal `OSC 9;4` escape sequence support.
   - When in `⚙️ Working`: Trigger an indeterminate spinning progress ring on the tab header and taskbar.

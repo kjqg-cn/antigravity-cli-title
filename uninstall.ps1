@@ -18,14 +18,7 @@ if (-not $homeDir) { $homeDir = $env:HOME }
 
 $settingsPath = Join-Path $homeDir ".gemini\antigravity-cli\settings.json"
 
-if (Test-Path $settingsPath) {
-    try {
-        $raw = Get-Content -Raw -Path $settingsPath -Encoding UTF8
-        $settingsObj = ConvertFrom-Json $raw -ErrorAction Stop
-
-        if ($settingsObj.PSObject.Properties['title']) {
-            $settingsObj.PSObject.Properties.Remove('title')
-            function Format-CleanJson([string]$json, [int]$indent = 2) {
+function Format-CleanJson([string]$json, [int]$indent = 2) {
     $indentStr = " " * $indent
     $level = 0
     $inString = $false
@@ -83,6 +76,13 @@ if (Test-Path $settingsPath) {
     return ($res -replace '\{\s*\}', '{}' -replace '\[\s*\]', '[]' -replace '\\u0027', "'" -replace '\\u003c', '<' -replace '\\u003e', '>' -replace '\\u0026', '&')
 }
 
+if (Test-Path $settingsPath) {
+    try {
+        $raw = Get-Content -Raw -Path $settingsPath -Encoding UTF8
+        $settingsObj = ConvertFrom-Json $raw -ErrorAction Stop
+
+        if ($settingsObj.PSObject.Properties['title']) {
+            $settingsObj.PSObject.Properties.Remove('title')
             $updatedJson = Format-CleanJson ($settingsObj | ConvertTo-Json -Depth 10) 2
             $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
             [System.IO.File]::WriteAllText($settingsPath, $updatedJson, $utf8NoBom)
@@ -105,7 +105,7 @@ if ($Purge) {
     }
 } else {
     if (Test-Path $targetDir) {
-        Write-Host "[i] Scripts preserved at: $targetDir (Use -Purge to completely remove directory)" -ForegroundColor Gray
+        Write-Host "[i] Files preserved at: $targetDir (Use -Purge to completely remove directory)" -ForegroundColor Gray
     }
 }
 

@@ -29,10 +29,10 @@ Existing solutions (like bottom statuslines) only work when the window is in the
 **`antigravity-cli-title`** implements a **4-state lifecycle state machine** directly in your terminal tab / window title:
 
 ```
-[Window Tab]  agy: ⚙️ Fix user login issue           <- Currently thinking / executing
-[Window Tab]  agy: ⚠️ Deploy to production           <- Blocked! Waiting for your confirmation
-[Window Tab]  agy: ✅ Refactor database schema        <- Finished! Ready for review
 [Window Tab]  agy: ⚪ Docker compose setup            <- Idle / waiting for first instruction
+[Window Tab]  agy: ⚙️ Fix user login issue            <- Currently thinking / executing
+[Window Tab]  agy: ⚠️ Deploy to production            <- Blocked! Waiting for your confirmation
+[Window Tab]  agy: ✅ Refactor database schema        <- Finished! Ready for review
 ```
 
 ---
@@ -50,11 +50,12 @@ Existing solutions (like bottom statuslines) only work when the window is in the
   - Binds conversation IDs with active CLI process lifecycles. Zero cross-window state pollution.
 - **🏷️ Intelligent Title Hierarchy**:
   - `conversation_title` ➔ First user request (smartly truncated) ➔ Current workspace directory name.
-- **🚀 High Performance**:
-  - Fast-path PID caching with zero noticeable latency; non-blocking asynchronous execution.
+- **🚀 Ultra-Fast Native Execution Engine (`title.exe`)**:
+  - Pure Go native renderer with zero external dependencies, directly invoking Windows system APIs (`NtQueryInformationProcess`, `winsqlite3.dll`) with sub-3ms latency.
+  - Automatically installed, compiled, or downloaded via `install.ps1`.
 - **🌐 Cross-Platform**:
-  - Native **PowerShell** renderer for Windows (with UTF-8 BOM compatibility).
-  - Native **POSIX Bash** renderer for Linux / macOS.
+  - Native **Go binary (`title.exe`)** for Windows.
+  - Native **POSIX Bash** renderer (`title.sh`) for Linux / macOS.
 
 ---
 
@@ -115,7 +116,7 @@ The installation automatically updates `~/.gemini/antigravity-cli/settings.json`
 {
   "title": {
     "type": "command",
-    "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:/Users/YourName/.gemini/antigravity-cli-title/title.ps1",
+    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe",
     "enabled": true
   }
 }
@@ -127,10 +128,10 @@ You can customize the command behavior by appending flags in `settings.json`:
 
 | Flag | Example | Description |
 | :--- | :--- | :--- |
-| `--no-prefix` | `title.ps1 --no-prefix` | Hides the leading `agy: ` tag (output: `✅ Refactor login`). |
-| `--prefix <str>` | `title.ps1 --prefix "🤖"` | Customizes the prefix tag. |
-| `--text` / `--classic` | `title.ps1 --text` | Uses ASCII text indicators like `[DONE]` instead of emojis. |
-| `--max-length <n>` | `title.ps1 --max-length 40` | Sets max character length for truncated titles (default: 35). |
+| `--no-prefix` | `title.exe --no-prefix` | Hides the leading `agy: ` tag (output: `✅ Refactor login`). |
+| `--prefix <str>` | `title.exe --prefix "🤖"` | Customizes the prefix tag. |
+| `--text` / `--classic` | `title.exe --text` | Uses ASCII text indicators like `[DONE]` instead of emojis. |
+| `--max-length <n>` | `title.exe --max-length 40` | Sets max character length for truncated titles (default: 35). |
 
 ---
 

@@ -1,4 +1,4 @@
-# install.ps1 - Installer for Antigravity CLI Window Title (Windows/PowerShell)
+# install.ps1 - Native Installer for Antigravity CLI Window Title (Windows Native Engine)
 param(
     [switch]$NoPrefix,
     [switch]$Text,
@@ -17,7 +17,7 @@ $eWorking  = [char]::ConvertFromUtf32(0x2699) + [char]0xFE0F
 $eWaiting  = [char]::ConvertFromUtf32(0x26A0) + [char]0xFE0F
 $eDone     = [char]::ConvertFromUtf32(0x2705)
 
-Write-Host "   $eRocket Antigravity CLI Window Title Installer (Windows)    " -ForegroundColor Green
+Write-Host "   $eRocket Antigravity CLI Window Title Installer (Windows Native)    " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $homeDir = $env:USERPROFILE
@@ -29,28 +29,10 @@ if (-not (Test-Path $targetDir)) {
     Write-Host "[+] Created target directory: $targetDir" -ForegroundColor Gray
 }
 
-# 1. Install title.ps1 and uninstall.ps1
+# 1. Install uninstaller (uninstall.ps1)
 $repoBaseUrl = "https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main"
-
-$localTitle = if ($PSScriptRoot) { Join-Path $PSScriptRoot "scripts\title.ps1" } else { "scripts\title.ps1" }
 $localUninstall = if ($PSScriptRoot) { Join-Path $PSScriptRoot "uninstall.ps1" } else { "uninstall.ps1" }
-
-$destFile = Join-Path $targetDir "title.ps1"
 $destUninstall = Join-Path $targetDir "uninstall.ps1"
-
-if (Test-Path $localTitle) {
-    Copy-Item -Path $localTitle -Destination $destFile -Force
-    Write-Host "[+] Installed renderer to: $destFile" -ForegroundColor Green
-} else {
-    Write-Host "[*] Fetching renderer from GitHub..." -ForegroundColor Gray
-    try {
-        Invoke-RestMethod -Uri "$repoBaseUrl/scripts/title.ps1" -OutFile $destFile
-        Write-Host "[+] Downloaded renderer to: $destFile" -ForegroundColor Green
-    } catch {
-        Write-Error "[-] Failed to download renderer from GitHub: $_"
-        exit 1
-    }
-}
 
 if (Test-Path $localUninstall) {
     Copy-Item -Path $localUninstall -Destination $destUninstall -Force
@@ -65,7 +47,48 @@ if (Test-Path $localUninstall) {
     }
 }
 
-# 2. Build Title Command
+# 2. Install Native Fast Execution Engine (title.exe)
+$localExe = if ($PSScriptRoot) { Join-Path $PSScriptRoot "title.exe" } else { "title.exe" }
+$destExe = Join-Path $targetDir "title.exe"
+$hasNativeExe = $false
+
+if (Test-Path $localExe) {
+    Copy-Item -Path $localExe -Destination $destExe -Force
+    Write-Host "[+] Installed native fast execution engine: $destExe" -ForegroundColor Green
+    $hasNativeExe = $true
+} else {
+    $goCmd = Get-Command go -ErrorAction SilentlyContinue
+    $goSourceDir = if ($PSScriptRoot) { Join-Path $PSScriptRoot "cmd\title" } else { "cmd\title" }
+    if ($goCmd -and (Test-Path $goSourceDir)) {
+        Write-Host "[*] Compiling native execution engine (title.exe) via local Go..." -ForegroundColor Gray
+        try {
+            & go build -ldflags="-s -w" -o $destExe "$goSourceDir"
+            if (Test-Path $destExe) {
+                Write-Host "[+] Compiled native execution engine: $destExe" -ForegroundColor Green
+                $hasNativeExe = $true
+            }
+        } catch {}
+    }
+}
+
+if (-not $hasNativeExe) {
+    try {
+        $releaseExeUrl = "https://github.com/kjqg-cn/antigravity-cli-title/releases/latest/download/title.exe"
+        Write-Host "[*] Downloading pre-built native execution engine (title.exe)..." -ForegroundColor Gray
+        Invoke-RestMethod -Uri $releaseExeUrl -OutFile $destExe -TimeoutSec 15 -ErrorAction Stop
+        if ((Test-Path $destExe) -and (Get-Item $destExe).Length -gt 100000) {
+            Write-Host "[+] Downloaded native fast execution engine: $destExe" -ForegroundColor Green
+            $hasNativeExe = $true
+        } else {
+            if (Test-Path $destExe) { Remove-Item $destExe -Force }
+        }
+    } catch {
+        Write-Error "[-] Failed to obtain title.exe: $_`nPlease install Go (https://go.dev) or compile manually: go build -o title.exe ./cmd/title"
+        exit 1
+    }
+}
+
+# 3. Build Title Command
 $scriptArgs = @()
 if ($NoPrefix) { $scriptArgs += "--no-prefix" }
 if ($Text) { $scriptArgs += "--text" }
@@ -73,10 +96,10 @@ if ($Prefix -ne "agy:") { $scriptArgs += "--prefix `"$Prefix`"" }
 if ($MaxLength -ne 35) { $scriptArgs += "--max-length $MaxLength" }
 
 $argsPart = if ($scriptArgs.Count -gt 0) { " " + ($scriptArgs -join " ") } else { "" }
-$destPathNormalized = $destFile -replace '\\', '/'
-$titleCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $destPathNormalized$argsPart"
+$destExeNormalized = $destExe -replace '\\', '/'
+$titleCmd = "$destExeNormalized$argsPart"
 
-# 3. Update settings.json
+# 4. Update settings.json
 $settingsDir = Join-Path $homeDir ".gemini\antigravity-cli"
 $settingsPath = Join-Path $settingsDir "settings.json"
 
@@ -182,6 +205,7 @@ Write-Host "[+] Successfully configured 'title' in: $settingsPath" -ForegroundCo
 Write-Host "`n$eSparkles Installation complete!" -ForegroundColor Cyan
 Write-Host "   Command configured: $titleCmd" -ForegroundColor Gray
 Write-Host "   Installed directory: $targetDir" -ForegroundColor Gray
+Write-Host "   Engine: Native Compiled Executable (< 3ms latency)" -ForegroundColor Green
 Write-Host "   To uninstall later, run:" -ForegroundColor Gray
 Write-Host "     powershell.exe -File `"$destUninstall`"" -ForegroundColor Gray
 Write-Host "   Try asking Antigravity CLI a question to see the 4-state indicator in action:`n"

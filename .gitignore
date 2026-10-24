@@ -24,3 +24,8 @@ desktop.ini
 # Test artifacts
 scratch/
 test_*/
+
+# Compiled binaries
+*.exe
+title_linux
+title_darwin
