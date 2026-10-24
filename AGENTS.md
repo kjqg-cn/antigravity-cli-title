@@ -30,9 +30,7 @@ antigravity-cli-title/
 ├── docs/
 │   └── demo.gif                 # 4-state lifecycle demonstration animation
 ├── cmd/
-│   └── title/                   # Windows native execution engine (Pure Go, < 3ms)
-├── scripts/
-│   └── title.sh                 # Linux / macOS native renderer (POSIX Bash)
+│   └── title/                   # Universal native execution engine (Windows / Linux / macOS)
 ├── install.ps1 / install.sh     # Zero-config installers (injects into settings.json)
 ├── uninstall.ps1 / uninstall.sh # Clean uninstallers (preserves user settings)
 ├── .gitignore                   # Ignores runtime markers and PIDs
@@ -52,7 +50,7 @@ antigravity-cli-title/
   4. **The `default` ID Isolation Rule**:
      When `conversation_id` is empty (pre-flight/fresh launch), the renderer will **never** read or write a shared `marker_default.txt`, eliminating cross-session collision.
   5. **Background Subagents & Tasks Integration**:
-     When the main agent finishes its turn, `agent_state` transitions to `idle`. However, if active subagents (`$data.subagents`) or background tasks (`$data.task_count > 0`) are running, the session state remains **`⚙️ Working`** and writes `RUNNING` to the marker file. It only transitions to **`✅ Completed`** once all background tasks and subagents have fully finished.
+     When the main agent finishes its turn, `agent_state` transitions to `idle`. However, if active subagents (`$data.subagents`) or background tasks (`$data.task_count > 0`) are running, the session state remains **`⚙️ Working`** and writes `RUNNING` to the marker file. For background tasks, a 60-second smart decay mechanism monitors `.system_generated/tasks/` log activity: if all task logs have been silent for more than 60 seconds (customizable via `--task-timeout`), the session automatically decays and transitions to **`✅ Completed`**, preventing orphaned or hung tasks from permanently jamming the title.
   6. When state transitions to `idle` without background jobs:
      - If `hasHistory == true`, `conversation_id` is valid, and the marker matches the currently running `agy.exe` and was active in this lifetime ➔ **`✅` Completed**.
      - If the marker belongs to a dead PID or doesn't match (user closed CLI and reopened) ➔ **`⚪` Ready**.
@@ -64,7 +62,7 @@ Antigravity CLI does not send a `conversation_title` field in standard telemetry
 2. **Tier 2 - Global SQLite Summary (`conversation_summaries.db`)**:
    - `/resume` reads AI-generated conversation summaries from `~/.gemini/antigravity-cli/conversation_summaries.db`.
    - On Windows, `title.exe` binds directly to Windows 10/11 native `winsqlite3.dll` to query the title in read-only mode (< 1ms, zero third-party dependencies).
-   - On Linux/macOS, `title.sh` uses standard Python `sqlite3` in URI read-only mode (`file:... ?mode=ro`).
+   - On Linux/macOS, `title` dynamically queries sqlite3 in read-only URI mode (`file:... ?mode=ro`) when available.
 3. **Tier 3 - Immediate Transcript Prompt (`transcript.jsonl`)**:
    - In turn 1 before the model finishes and generates an AI summary, the title immediately mirrors the user's first prompt (`<USER_REQUEST>`).
    - Note: Pipeline results in PowerShell MUST be wrapped in `@(...)` to avoid single-line string unwrapping into `[char]` indexing.
@@ -100,7 +98,7 @@ Under `agent_state == "tool_use"`, the script seeks the last 128KB of `transcrip
 
 > [!WARNING]
 > **No Blocking Calls in Title Renderer**:
-> `title.exe` and `title.sh` are invoked frequently on telemetry events.
+> `title.exe` and `title` are invoked frequently on telemetry events.
 > - **NEVER** add network requests or unbounded file reads.
 > - All file operations must use safe exception handling.
 

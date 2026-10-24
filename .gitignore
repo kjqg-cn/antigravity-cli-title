@@ -27,5 +27,5 @@ test_*/
 
 # Compiled binaries
 *.exe
-title_linux
-title_darwin
+/title
+/title_*

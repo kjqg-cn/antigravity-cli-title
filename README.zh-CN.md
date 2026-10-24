@@ -53,9 +53,9 @@
 - **🚀 原生超高速执行引擎 (`title.exe`)**：
   - 基于纯 Go 构建的高性能执行引擎，零第三方依赖，直调 Windows 系统级 API（`NtQueryInformationProcess` 与 `winsqlite3.dll`），耗时极低（通常 < 3ms，比 PowerShell 进程冷启动快 13 倍以上）。
   - `install.ps1` 安装器会自动优先在本地编译或从 GitHub Release 下载预编译的 `title.exe`。
-- **🌐 全平台原生支持**：
-  - Windows 原生 **Go 编译二进制 (`title.exe`)**。
-  - 原生 **POSIX Bash** 渲染器 (`title.sh`，支持 Linux 与 macOS)。
+- **🌐 全平台原生极速支持**：
+  - Windows、Linux、macOS 全平台统一 **Go 原生编译二进制 (`title.exe` / `title`)**。
+  - 零外部运行时依赖（无需额外安装 Python3 或配置 PowerShell），全平台微秒级极速响应。
 
 ---
 
@@ -132,6 +132,7 @@ cd antigravity-cli-title
 | `--prefix <str>` | `title.exe --prefix "🤖"` | 自定义前缀标识符。 |
 | `--text` / `--classic` | `title.exe --text` | 使用 `[DONE]` 等纯 ASCII 文本指示器替代 Emoji 图标。 |
 | `--max-length <n>` | `title.exe --max-length 40` | 设置标题截断的最大字符长度（默认：35）。 |
+| `--task-timeout <n>` | `title.exe --task-timeout 60` | 后台异步任务输出静默超时（秒），超过此时间无新输出自动解除阻塞进入 DONE（默认：60）。 |
 
 ---
 

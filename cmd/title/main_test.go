@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
+	"time"
 )
 
 func TestGlobToRegex(t *testing.T) {
@@ -68,5 +71,32 @@ func TestCleanStdin(t *testing.T) {
 	cleaned16 := cleanStdin(withU16LE)
 	if string(cleaned16) != "ab" {
 		t.Errorf("Failed to decode UTF-16LE: %s", string(cleaned16))
+	}
+}
+
+func TestHasRecentlyActiveTasks(t *testing.T) {
+	tempDir := t.TempDir()
+	tasksDir := filepath.Join(tempDir, "tasks")
+	_ = os.MkdirAll(tasksDir, 0755)
+
+	// 1. Initially no log files -> returns false
+	if hasRecentlyActiveTasks("", "", filepath.Join(tempDir, "logs", "transcript.jsonl"), 60*time.Second) {
+		t.Errorf("Expected false when no log files exist")
+	}
+
+	// 2. Create an active log file modified just now
+	logFile := filepath.Join(tasksDir, "task-100.log")
+	_ = os.WriteFile(logFile, []byte("running"), 0644)
+
+	if !hasRecentlyActiveTasks("", "", filepath.Join(tempDir, "logs", "transcript.jsonl"), 60*time.Second) {
+		t.Errorf("Expected true when active log file was just modified")
+	}
+
+	// 3. Set log file mod time to 2 minutes ago
+	oldTime := time.Now().Add(-2 * time.Minute)
+	_ = os.Chtimes(logFile, oldTime, oldTime)
+
+	if hasRecentlyActiveTasks("", "", filepath.Join(tempDir, "logs", "transcript.jsonl"), 60*time.Second) {
+		t.Errorf("Expected false when log file is older than 60s")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 )
 
@@ -208,6 +209,46 @@ func isInternalOrTempPath(p string) bool {
 	return false
 }
 
+func hasRecentlyActiveTasks(homeDir, convID, transcriptPath string, timeout time.Duration) bool {
+	now := time.Now()
+	var candidateDirs []string
+	if transcriptPath != "" {
+		logsDir := filepath.Dir(transcriptPath)
+		sysGenDir := filepath.Dir(logsDir)
+		candidateDirs = append(candidateDirs, filepath.Join(sysGenDir, "tasks"))
+	}
+	if convID != "" && homeDir != "" {
+		candidateDirs = append(candidateDirs,
+			filepath.Join(homeDir, ".gemini", "antigravity-cli", "brain", convID, ".system_generated", "tasks"),
+			filepath.Join(homeDir, ".gemini", "antigravity", "brain", convID, ".system_generated", "tasks"),
+		)
+	}
+
+	for _, dir := range candidateDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		foundLog := false
+		for i := len(entries) - 1; i >= 0; i-- {
+			e := entries[i]
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
+				continue
+			}
+			foundLog = true
+			if info, err := e.Info(); err == nil {
+				if now.Sub(info.ModTime()) <= timeout {
+					return true
+				}
+			}
+		}
+		if foundLog {
+			return false
+		}
+	}
+	return false
+}
+
 func cleanStdin(b []byte) []byte {
 	// UTF-8 BOM
 	b = bytes.TrimPrefix(b, []byte("\xef\xbb\xbf"))
@@ -235,6 +276,7 @@ func main() {
 	customPrefix := "agy:"
 	useTextStatus := false
 	maxTitleLen := 35
+	taskTimeout := 60 * time.Second
 
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
@@ -248,6 +290,13 @@ func main() {
 			if i+1 < len(args) {
 				if v, err := strconv.Atoi(args[i+1]); err == nil && v > 5 {
 					maxTitleLen = v
+					i++
+				}
+			}
+		case "--task-timeout":
+			if i+1 < len(args) {
+				if v, err := strconv.Atoi(args[i+1]); err == nil && v > 0 {
+					taskTimeout = time.Duration(v) * time.Second
 					i++
 				}
 			}
@@ -612,7 +661,12 @@ func main() {
 		}
 
 	default: // idle and inactive states
-		if activeSubagents > 0 || activeTasks > 0 {
+		hasActiveBgTasks := false
+		if activeTasks > 0 {
+			hasActiveBgTasks = hasRecentlyActiveTasks(homeDir, convID, transcriptPath, taskTimeout)
+		}
+
+		if activeSubagents > 0 || hasActiveBgTasks {
 			statusIndicator = "⚙️"
 			if useTextStatus {
 				statusIndicator = "[WORKING]"

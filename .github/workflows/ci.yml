@@ -44,7 +44,6 @@ jobs:
         shell: bash
         run: |
           if command -v bash >/dev/null 2>&1; then
-              bash -n scripts/title.sh
               bash -n install.sh
               bash -n uninstall.sh
               echo "All Bash scripts passed syntax validation."
@@ -61,6 +60,8 @@ jobs:
           go vet ./...
           go test -v ./...
           GOOS=windows GOARCH=amd64 go build -v -ldflags="-s -w" -o title.exe ./cmd/title
-          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o title_linux ./cmd/title
-          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o title_darwin ./cmd/title
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o title_linux_amd64 ./cmd/title
+          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o title_linux_arm64 ./cmd/title
+          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o title_darwin_amd64 ./cmd/title
+          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o title_darwin_arm64 ./cmd/title
           echo "All native binary targets compiled successfully."

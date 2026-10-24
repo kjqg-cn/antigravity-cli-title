@@ -45,7 +45,7 @@ if [[ "$PURGE" == true ]]; then
     fi
 else
     if [[ -d "$TARGET_DIR" ]]; then
-        echo "[i] Scripts preserved at: $TARGET_DIR (Use --purge to completely remove directory)"
+        echo "[i] Files preserved at: $TARGET_DIR (Use --purge to completely remove directory)"
     fi
 fi
 

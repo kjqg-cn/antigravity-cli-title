@@ -53,9 +53,9 @@ Existing solutions (like bottom statuslines) only work when the window is in the
 - **🚀 Ultra-Fast Native Execution Engine (`title.exe`)**:
   - Pure Go native renderer with zero external dependencies, directly invoking Windows system APIs (`NtQueryInformationProcess`, `winsqlite3.dll`) with sub-3ms latency.
   - Automatically installed, compiled, or downloaded via `install.ps1`.
-- **🌐 Cross-Platform**:
-  - Native **Go binary (`title.exe`)** for Windows.
-  - Native **POSIX Bash** renderer (`title.sh`) for Linux / macOS.
+- **🌐 Cross-Platform Native Support**:
+  - Universal **Go native binary (`title.exe` / `title`)** for Windows, Linux, and macOS.
+  - Sub-3ms latency with zero Python or PowerShell dependencies.
 
 ---
 
@@ -132,6 +132,7 @@ You can customize the command behavior by appending flags in `settings.json`:
 | `--prefix <str>` | `title.exe --prefix "🤖"` | Customizes the prefix tag. |
 | `--text` / `--classic` | `title.exe --text` | Uses ASCII text indicators like `[DONE]` instead of emojis. |
 | `--max-length <n>` | `title.exe --max-length 40` | Sets max character length for truncated titles (default: 35). |
+| `--task-timeout <n>` | `title.exe --task-timeout 60` | Background task silence threshold in seconds before auto-releasing to DONE (default: 60). |
 
 ---
 
