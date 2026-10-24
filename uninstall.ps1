@@ -103,6 +103,46 @@ if ($Purge) {
         Remove-Item -Path $targetDir -Recurse -Force
         Write-Host "[+] Purged installation directory: $targetDir" -ForegroundColor Green
     }
+
+    $wtPaths = @(
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\settings.json')
+    )
+    foreach ($p in $wtPaths) {
+        if (Test-Path $p) {
+            try {
+                $rawWt = Get-Content $p -Raw -Encoding UTF8
+                $wtObj = ConvertFrom-Json $rawWt -ErrorAction Stop
+                $filtered = @($wtObj.profiles.list | Where-Object { $_.guid -ne "{a9191a91-a919-4a91-a919-a9191a91a919}" -and $_.name -ne "Google Antigravity" })
+                if ($filtered.Count -ne $wtObj.profiles.list.Count) {
+                    $wtObj.profiles.list = $filtered
+                    $cleanWt = Format-CleanJson ($wtObj | ConvertTo-Json -Depth 10) 4
+                    [System.IO.File]::WriteAllText($p, $cleanWt, $utf8NoBom)
+                    Write-Host "[+] Removed 'Google Antigravity' profile from: $p" -ForegroundColor Green
+                }
+            } catch {}
+        }
+    }
+
+    $docsDir = [Environment]::GetFolderPath('MyDocuments')
+    $candidateProfiles = @(
+        (Join-Path $docsDir 'PowerShell\Microsoft.PowerShell_profile.ps1'),
+        (Join-Path $docsDir 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+    )
+    foreach ($profPath in $candidateProfiles) {
+        if (Test-Path $profPath) {
+            try {
+                $content = Get-Content $profPath -Raw -Encoding UTF8
+                if ($content -match '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<') {
+                    $cleaned = ($content -replace '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<', '').Trim()
+                    $finalText = if ([string]::IsNullOrWhiteSpace($cleaned)) { "" } else { $cleaned + [Environment]::NewLine }
+                    [System.IO.File]::WriteAllText($profPath, $finalText, $utf8NoBom)
+                    Write-Host "[+] Removed Antigravity profile router from: $profPath" -ForegroundColor Green
+                }
+            } catch {}
+        }
+    }
 } else {
     if (Test-Path $targetDir) {
         Write-Host "[i] Files preserved at: $targetDir (Use -Purge to completely remove directory)" -ForegroundColor Gray

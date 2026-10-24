@@ -87,6 +87,9 @@ irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install
 git clone https://github.com/kjqg-cn/antigravity-cli-title.git
 cd antigravity-cli-title
 .\install.ps1
+
+# 可选：在 Windows Terminal 中配置专属 Profile（官方彩色 Logo）并在 PowerShell 中开启敲 agy 自动唤起
+.\install.ps1 -WTProfile
 ```
 
 ### Linux / macOS (Bash)

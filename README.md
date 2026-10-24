@@ -87,6 +87,9 @@ irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install
 git clone https://github.com/kjqg-cn/antigravity-cli-title.git
 cd antigravity-cli-title
 .\install.ps1
+
+# Optional: Create dedicated "Google Antigravity" Windows Terminal profile with official Logo & PowerShell auto-launcher
+.\install.ps1 -WTProfile
 ```
 
 ### Linux / macOS (Bash)

@@ -3,7 +3,9 @@ param(
     [switch]$NoPrefix,
     [switch]$Text,
     [string]$Prefix = "agy:",
-    [int]$MaxLength = 35
+    [int]$MaxLength = 35,
+    [int]$TaskTimeout = 60,
+    [switch]$WTProfile
 )
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -88,18 +90,35 @@ if (-not $hasNativeExe) {
     }
 }
 
-# 3. Build Title Command
+# 3. Install Antigravity Icon Assets
+$assetsDir = Join-Path $targetDir "assets"
+if (-not (Test-Path $assetsDir)) { New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null }
+$localAssets = if ($PSScriptRoot) { Join-Path $PSScriptRoot "assets" } else { "assets" }
+if (Test-Path $localAssets) {
+    Copy-Item -Path "$localAssets\*" -Destination $assetsDir -Force -Recurse
+    Write-Host "[+] Installed Antigravity icon assets to: $assetsDir" -ForegroundColor Green
+} else {
+    try {
+        Invoke-RestMethod -Uri "$repoBaseUrl/assets/antigravity.png" -OutFile (Join-Path $assetsDir "antigravity.png")
+        Invoke-RestMethod -Uri "$repoBaseUrl/assets/antigravity.ico" -OutFile (Join-Path $assetsDir "antigravity.ico")
+        Invoke-RestMethod -Uri "$repoBaseUrl/assets/antigravity.svg" -OutFile (Join-Path $assetsDir "antigravity.svg")
+        Write-Host "[+] Downloaded Antigravity icon assets to: $assetsDir" -ForegroundColor Green
+    } catch {}
+}
+
+# 4. Build Title Command
 $scriptArgs = @()
 if ($NoPrefix) { $scriptArgs += "--no-prefix" }
 if ($Text) { $scriptArgs += "--text" }
 if ($Prefix -ne "agy:") { $scriptArgs += "--prefix `"$Prefix`"" }
 if ($MaxLength -ne 35) { $scriptArgs += "--max-length $MaxLength" }
+if ($TaskTimeout -ne 60) { $scriptArgs += "--task-timeout $TaskTimeout" }
 
 $argsPart = if ($scriptArgs.Count -gt 0) { " " + ($scriptArgs -join " ") } else { "" }
 $destExeNormalized = $destExe -replace '\\', '/'
 $titleCmd = "$destExeNormalized$argsPart"
 
-# 4. Update settings.json
+# 5. Update settings.json
 $settingsDir = Join-Path $homeDir ".gemini\antigravity-cli"
 $settingsPath = Join-Path $settingsDir "settings.json"
 
@@ -107,13 +126,13 @@ if (-not (Test-Path $settingsDir)) {
     New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
 }
 
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $settingsObj = [ordered]@{}
 if (Test-Path $settingsPath) {
     try {
         $raw = Get-Content -Raw -Path $settingsPath -Encoding UTF8
         # Backup original
         $bakPath = Join-Path $settingsDir "settings.json.bak"
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($bakPath, $raw, $utf8NoBom)
         Write-Host "[+] Backup saved to: $bakPath" -ForegroundColor Gray
         
@@ -198,9 +217,121 @@ function Format-CleanJson([string]$json, [int]$indent = 2) {
 }
 
 $updatedJson = Format-CleanJson ($settingsObj | ConvertTo-Json -Depth 10) 2
-if (-not $utf8NoBom) { $utf8NoBom = New-Object System.Text.UTF8Encoding($false) }
 [System.IO.File]::WriteAllText($settingsPath, $updatedJson, $utf8NoBom)
 Write-Host "[+] Successfully configured 'title' in: $settingsPath" -ForegroundColor Green
+
+# 6. Windows Terminal Profile & Smart Launcher Integration
+if ($WTProfile) {
+    $wtPaths = @(
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\settings.json')
+    )
+    $foundWt = $null
+    foreach ($p in $wtPaths) {
+        if (Test-Path $p) { $foundWt = $p; break }
+    }
+    if ($foundWt) {
+        try {
+            $rawWt = Get-Content $foundWt -Raw -Encoding UTF8
+            $wtObj = ConvertFrom-Json $rawWt -ErrorAction Stop
+            [System.IO.File]::WriteAllText(($foundWt + '.bak'), $rawWt, $utf8NoBom)
+
+            $iconPathNorm = ((Join-Path $assetsDir "antigravity.png") -replace '\\', '/')
+            $pwshCmd = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
+            $profileCmd = "$pwshCmd -NoExit -Command `"`$env:AGY_ACTIVE='1'; agy`""
+            $agyGuid = "{a9191a91-a919-4a91-a919-a9191a91a919}"
+
+            $existingProfile = $null
+            if ($wtObj.profiles.list) {
+                foreach ($pr in $wtObj.profiles.list) {
+                    if ($pr.guid -eq $agyGuid -or $pr.name -eq "Google Antigravity") {
+                        $existingProfile = $pr
+                        break
+                    }
+                }
+            }
+            if ($existingProfile) {
+                $existingProfile.icon = $iconPathNorm
+                $existingProfile.commandline = $profileCmd
+                $existingProfile.tabTitle = "Google Antigravity"
+                $existingProfile.hidden = $false
+                if ($existingProfile.PSObject.Properties['startingDirectory']) {
+                    $existingProfile.PSObject.Properties.Remove('startingDirectory')
+                }
+            } else {
+                $newPr = [ordered]@{
+                    "guid" = $agyGuid
+                    "name" = "Google Antigravity"
+                    "tabTitle" = "Google Antigravity"
+                    "commandline" = $profileCmd
+                    "icon" = $iconPathNorm
+                    "hidden" = $false
+                }
+                $list = [System.Collections.ArrayList]@($wtObj.profiles.list)
+                [void]$list.Add($newPr)
+                $wtObj.profiles.list = $list
+            }
+            $cleanWtJson = Format-CleanJson ($wtObj | ConvertTo-Json -Depth 10) 4
+            [System.IO.File]::WriteAllText($foundWt, $cleanWtJson, $utf8NoBom)
+            Write-Host "[+] Configured 'Google Antigravity' profile in Windows Terminal: $foundWt" -ForegroundColor Green
+        } catch {
+            Write-Warning "[-] Failed to configure Windows Terminal profile: $_"
+        }
+    }
+
+    # 7. Configure PowerShell Profile Router (Clean & Proxy-Free)
+    $docsDir = [Environment]::GetFolderPath('MyDocuments')
+    $candidateProfiles = @(
+        (Join-Path $docsDir 'PowerShell\Microsoft.PowerShell_profile.ps1'),
+        (Join-Path $docsDir 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+    )
+
+    $routerBlock = @"
+# >>> antigravity-cli-title profile router >>>
+function agy {
+    if (`$env:AGY_ACTIVE -ne '1' -and (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
+        `$wArg = if (`$env:WT_SESSION) { @("-w", "0") } else { @() }
+        if (`$args.Count -gt 0) {
+            `$argStr = (`$args | ForEach-Object { if (`$_ -match '\s') { "`"`$_`"" } else { `$_ } }) -join ' '
+            `$argStr = `$argStr -replace ';', '\;'
+            `$pwsh = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
+            wt.exe @wArg nt -p "{a9191a91-a919-4a91-a919-a9191a91a919}" -d "`$PWD" `$pwsh -NoExit -Command "if (`$env:AGY_ACTIVE = '1') { agy `$argStr }"
+        } else {
+            wt.exe @wArg nt -p "{a9191a91-a919-4a91-a919-a9191a91a919}" -d "`$PWD"
+        }
+        return
+    }
+    `$realAgy = "`$env:LOCALAPPDATA\agy\bin\agy.exe"
+    if (-not (Test-Path `$realAgy)) {
+        `$found = Get-Command agy.exe -ErrorAction SilentlyContinue
+        if (`$found) { `$realAgy = `$found.Source }
+    }
+    & `$realAgy @args
+}
+# <<< antigravity-cli-title profile router <<<
+"@
+
+    foreach ($profPath in $candidateProfiles) {
+        $parentDir = Split-Path $profPath
+        if ((Test-Path $profPath) -or (Test-Path $parentDir)) {
+            if (-not (Test-Path $parentDir)) { New-Item -ItemType Directory -Path $parentDir -Force | Out-Null }
+            $existing = if (Test-Path $profPath) { Get-Content $profPath -Raw -Encoding UTF8 } else { "" }
+            if ($existing -match '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<') {
+                $newContent = $existing -replace '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<', $routerBlock.Trim()
+                [System.IO.File]::WriteAllText($profPath, $newContent.Trim() + [Environment]::NewLine, $utf8NoBom)
+                Write-Host "[+] Updated Antigravity profile router in: $profPath" -ForegroundColor Green
+            } elseif ($existing -match 'function\s+agy\b') {
+                Write-Host "[i] Custom 'function agy' already exists in: $profPath (preserved)" -ForegroundColor Gray
+            } else {
+                $separator = if ([string]::IsNullOrWhiteSpace($existing)) { "" } else { [Environment]::NewLine + [Environment]::NewLine }
+                $newContent = $existing.TrimEnd() + $separator + $routerBlock.Trim() + [Environment]::NewLine
+                [System.IO.File]::WriteAllText($profPath, $newContent, $utf8NoBom)
+                Write-Host "[+] Injected Antigravity profile router into: $profPath" -ForegroundColor Green
+            }
+        }
+    }
+}
 
 Write-Host "`n$eSparkles Installation complete!" -ForegroundColor Cyan
 Write-Host "   Command configured: $titleCmd" -ForegroundColor Gray

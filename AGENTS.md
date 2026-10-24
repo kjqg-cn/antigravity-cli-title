@@ -156,14 +156,11 @@ This project is actively maintained and evolved by the user. Future agents shoul
   - Uses Windows native system APIs (`NtQueryInformationProcess`, `winsqlite3.dll`, PEB command-line inspection).
   - Eliminates `powershell.exe` cold-start latency (~13x speedup).
   - Automatically compiled from source or downloaded from GitHub releases by `install.ps1`.
-- [ ] **Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
-  - Implement ConEmu / Windows Terminal `OSC 9;4` escape sequence support.
-  - When in `⚙️ Working`: Trigger an indeterminate spinning progress ring on the tab header and taskbar.
-  - When in `⚠️ Waiting`: Trigger a yellow warning flash/ring.
-  - When in `✅ Completed`: Clear/reset progress ring.
-- [ ] **Custom State Emoji / Text Mapping Config**:
-  - Allow users to override default emojis (`⚪`, `⚙️`, `⚠️`, `✅`) via command-line flags or a user configuration block in `settings.json`.
-- [ ] **Custom Terminal Tab Logo / Profile Integration**:
-  - Provide an option in `install.ps1` (e.g. `-SetTerminalIcon`) to automatically configure Windows Terminal profiles with an official Antigravity logo (`.ico`/`.png`).
+- [x] **Custom Terminal Tab Logo / Profile Integration**:
+  - Implemented high-res Antigravity logo assets (`assets/antigravity.png`, `assets/antigravity.ico`).
+  - Added `-WTProfile` in `install.ps1` to automatically configure Windows Terminal with a dedicated "Google Antigravity" profile.
+  - Implemented smart router in PowerShell `$PROFILE` so typing `agy` from any normal tab automatically opens under the Antigravity profile with dedicated logo.
+- [-] **Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
+  - Fully tested and evaluated: Windows Terminal's native WinUI ProgressRing forces system accent color (blue, breaking yellow warning indication) and occludes the tab profile icon. Dropped in favor of pure 4-state Emoji in title.
 - [ ] **Linux / macOS Terminal Enhancements**:
   - Verify escape sequence compatibility across iTerm2, Kitty, WezTerm, and Alacritty.
