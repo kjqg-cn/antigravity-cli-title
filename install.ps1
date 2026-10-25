@@ -41,7 +41,9 @@ $localUninstall = if ($PSScriptRoot) { Join-Path $PSScriptRoot "uninstall.ps1" }
 $destUninstall = Join-Path $targetDir "uninstall.ps1"
 
 if (Test-Path $localUninstall) {
-    Copy-Item -Path $localUninstall -Destination $destUninstall -Force
+    if ([System.IO.Path]::GetFullPath($localUninstall) -ne [System.IO.Path]::GetFullPath($destUninstall)) {
+        Copy-Item -Path $localUninstall -Destination $destUninstall -Force
+    }
     Write-Host "[+] Installed uninstaller to: $destUninstall" -ForegroundColor Green
 } else {
     Write-Host "[*] Fetching uninstaller from GitHub..." -ForegroundColor Gray
@@ -59,7 +61,9 @@ $destExe = Join-Path $targetDir "title.exe"
 $hasNativeExe = $false
 
 if (Test-Path $localExe) {
-    Copy-Item -Path $localExe -Destination $destExe -Force
+    if ([System.IO.Path]::GetFullPath($localExe) -ne [System.IO.Path]::GetFullPath($destExe)) {
+        Copy-Item -Path $localExe -Destination $destExe -Force
+    }
     Write-Host "[+] Installed native fast execution engine: $destExe" -ForegroundColor Green
     $hasNativeExe = $true
 } else {
@@ -99,7 +103,9 @@ $assetsDir = Join-Path $targetDir "assets"
 if (-not (Test-Path $assetsDir)) { New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null }
 $localAssets = if ($PSScriptRoot) { Join-Path $PSScriptRoot "assets" } else { "assets" }
 if (Test-Path $localAssets) {
-    Copy-Item -Path "$localAssets\*" -Destination $assetsDir -Force -Recurse
+    if ([System.IO.Path]::GetFullPath($localAssets) -ne [System.IO.Path]::GetFullPath($assetsDir)) {
+        Copy-Item -Path "$localAssets\*" -Destination $assetsDir -Force -Recurse
+    }
     Write-Host "[+] Installed Antigravity icon assets to: $assetsDir" -ForegroundColor Green
 } else {
     try {
@@ -366,11 +372,10 @@ function agy {
         `$wArg = if (`$env:WT_SESSION) { @("-w", "0") } else { @() }
         if (`$args.Count -gt 0) {
             `$argStr = (`$args | ForEach-Object { if (`$_ -match '\s') { ('"' + `$_ + '"') } else { `$_ } }) -join ' '
-            `$argStr = `$argStr -replace ';', '\;'
             `$pwsh = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
-            `$targetCmd = '`$env:AGY_ACTIVE=' + "'1'; agy"
-            if (`$argStr) { `$targetCmd += " `$argStr" }
-            & `$wtCmd @wArg nt -p "Google Antigravity" -d "`$PWD" `$pwsh -NoExit -Command `$targetCmd
+            `$rawCmd = '`$env:AGY_ACTIVE=' + "'1'; agy `$argStr"
+            `$enc = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(`$rawCmd))
+            & `$wtCmd @wArg nt -p "Google Antigravity" -d "`$PWD" `$pwsh -NoExit -EncodedCommand `$enc
         } else {
             & `$wtCmd @wArg nt -p "Google Antigravity" -d "`$PWD"
         }
