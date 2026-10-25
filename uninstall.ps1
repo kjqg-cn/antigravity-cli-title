@@ -99,9 +99,15 @@ $targetDir = Join-Path $homeDir ".gemini\antigravity-cli-title"
 
 if ($Purge) {
     Set-Location $homeDir
+    Stop-Process -Name title -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 200
     if (Test-Path $targetDir) {
-        Remove-Item -Path $targetDir -Recurse -Force
-        Write-Host "[+] Purged installation directory: $targetDir" -ForegroundColor Green
+        try {
+            Remove-Item -Path $targetDir -Recurse -Force -ErrorAction Stop
+            Write-Host "[+] Purged installation directory: $targetDir" -ForegroundColor Green
+        } catch {
+            Write-Warning "[-] Could not completely remove ${targetDir}: $_"
+        }
     }
 
     $wtPaths = @(
@@ -166,3 +172,13 @@ if ($Purge) {
 
 Write-Host "`n$eSparkles Uninstallation completed." -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Blue
+
+# Prevent window from closing instantly when launched directly from Windows Explorer
+try {
+    $ppid = (Get-CimInstance Win32_Process -Filter ("ProcessId = " + $PID) -ErrorAction SilentlyContinue).ParentProcessId
+    $parentName = if ($ppid) { (Get-Process -Id $ppid -ErrorAction SilentlyContinue).ProcessName } else { "" }
+    if ($parentName -match 'explorer') {
+        Write-Host "`n按回车键退出..." -ForegroundColor Gray
+        [void][System.Console]::ReadLine()
+    }
+} catch {}

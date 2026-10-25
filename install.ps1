@@ -364,7 +364,7 @@ function agy {
     if (`$env:AGY_ACTIVE -ne '1' -and (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
         `$wArg = if (`$env:WT_SESSION) { @("-w", "0") } else { @() }
         if (`$args.Count -gt 0) {
-            `$argStr = (`$args | ForEach-Object { if (`$_ -match '\s') { "`"`$_`"" } else { `$_ } }) -join ' '
+            `$argStr = (`$args | ForEach-Object { if (`$_ -match '\s') { ('"' + `$_ + '"') } else { `$_ } }) -join ' '
             `$argStr = `$argStr -replace ';', '\;'
             `$pwsh = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
             wt.exe @wArg nt -p "{a9191a91-a919-4a91-a919-a9191a91a919}" -d "`$PWD" `$pwsh -NoExit -Command "if (`$env:AGY_ACTIVE = '1') { agy `$argStr }"
@@ -398,13 +398,14 @@ function agy {
             if (-not (Test-Path $parentDir)) { New-Item -ItemType Directory -Path $parentDir -Force | Out-Null }
             $existing = if (Test-Path $profPath) { Get-Content $profPath -Raw -Encoding UTF8 } else { "" }
             if ($existing -match '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<') {
-                $newContent = $existing -replace '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<', $routerBlock.Trim()
+                $newContent = [regex]::Replace($existing, '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<', { $routerBlock.Trim() })
                 [System.IO.File]::WriteAllText($profPath, $newContent.Trim() + [Environment]::NewLine, $utf8NoBom)
                 Write-Host "[+] Updated Antigravity profile router in: $profPath" -ForegroundColor Green
             } else {
-                $hasCustomAgy = ($existing -match 'function\s+agy\b')
-                $separator = if ([string]::IsNullOrWhiteSpace($existing)) { "" } else { [Environment]::NewLine + [Environment]::NewLine }
-                $newContent = $existing.TrimEnd() + $separator + $routerBlock.Trim() + [Environment]::NewLine
+                $hasCustomAgy = ($existing -and ($existing -match 'function\s+agy\b'))
+                $existingText = if ([string]::IsNullOrWhiteSpace($existing)) { "" } else { $existing.TrimEnd() }
+                $separator = if ([string]::IsNullOrWhiteSpace($existingText)) { "" } else { [Environment]::NewLine + [Environment]::NewLine }
+                $newContent = $existingText + $separator + $routerBlock.Trim() + [Environment]::NewLine
                 [System.IO.File]::WriteAllText($profPath, $newContent, $utf8NoBom)
                 if ($hasCustomAgy) {
                     Write-Host "[+] Injected Antigravity profile router into: $profPath (seamlessly wrapped your custom agy/proxy function)" -ForegroundColor Green
@@ -428,3 +429,13 @@ Write-Host "   $eWorking  Working   -> Thinking / background task execution" -Fo
 Write-Host "   $eWaiting  Waiting   -> Prompting user (ask_question) or permission confirmation" -ForegroundColor Red
 Write-Host "   $eDone Done      -> Turn completed; remains done until new input" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
+
+# Prevent window from closing instantly when launched directly from Windows Explorer
+try {
+    $ppid = (Get-CimInstance Win32_Process -Filter ("ProcessId = " + $PID) -ErrorAction SilentlyContinue).ParentProcessId
+    $parentName = if ($ppid) { (Get-Process -Id $ppid -ErrorAction SilentlyContinue).ProcessName } else { "" }
+    if ($parentName -match 'explorer') {
+        Write-Host "`n按回车键退出..." -ForegroundColor Gray
+        [void][System.Console]::ReadLine()
+    }
+} catch {}
