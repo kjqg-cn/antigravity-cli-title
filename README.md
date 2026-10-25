@@ -77,9 +77,15 @@ Existing solutions (like bottom statuslines) only work when the window is in the
 Run the following command in PowerShell:
 
 ```powershell
-# One-line installation via GitHub
+# 1. Basic one-line installation (clean mode, title engine only)
 irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.ps1 | iex
+
+# 2. Recommended: One-line install with dedicated Windows Terminal Profile (official Logo + agy auto-launcher)
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.ps1))) -WTProfile
 ```
+
+> [!TIP]
+> If already installed, running the command with `-WTProfile` at any time will **safely and incrementally enable the Profile** while preserving all existing custom configurations.
 
 *Or install locally from source:*
 
@@ -88,7 +94,7 @@ git clone https://github.com/kjqg-cn/antigravity-cli-title.git
 cd antigravity-cli-title
 .\install.ps1
 
-# Optional: Create dedicated "Google Antigravity" Windows Terminal profile with official Logo & PowerShell auto-launcher
+# Local install with Profile
 .\install.ps1 -WTProfile
 ```
 

@@ -77,9 +77,15 @@
 在 PowerShell 中执行以下命令一键安装：
 
 ```powershell
-# 通过 GitHub 一键在线安装
+# 1. 基础一键安装（纯净模式，仅安装标题管理器）
 irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.ps1 | iex
+
+# 2. 推荐：一键安装并自动配置 Windows Terminal 专属 Profile（官方彩色 Logo + 敲 agy 自动唤起）
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.ps1))) -WTProfile
 ```
+
+> [!TIP]
+> 如果此前已安装过，任何时候运行带 `-WTProfile` 的命令均可**安全增量开启 Profile**，已有的自定义配置将 100% 完整保留。
 
 *或者克隆源码本地安装：*
 
@@ -88,7 +94,7 @@ git clone https://github.com/kjqg-cn/antigravity-cli-title.git
 cd antigravity-cli-title
 .\install.ps1
 
-# 可选：在 Windows Terminal 中配置专属 Profile（官方彩色 Logo）并在 PowerShell 中开启敲 agy 自动唤起
+# 本地带 Profile 安装
 .\install.ps1 -WTProfile
 ```
 

@@ -132,10 +132,13 @@ function Format-SymbolArg([string]$flag, [string]$val) {
 }
 
 # 4. Build Title Command
+# Automatically enable --no-prefix when WTProfile is used (since tab already displays the official Logo)
+$effectiveNoPrefix = $NoPrefix.IsPresent -or ($WTProfile.IsPresent -and $Prefix -eq "agy:")
+
 $scriptArgs = @()
-if ($NoPrefix) { $scriptArgs += "--no-prefix" }
+if ($effectiveNoPrefix) { $scriptArgs += "--no-prefix" }
 if ($Text) { $scriptArgs += "--text" }
-if ($Prefix -ne "agy:") {
+if (-not $effectiveNoPrefix -and $Prefix -ne "agy:") {
     $cleanPrefix = Clean-SymbolValue $Prefix
     if ($cleanPrefix -match '\s') {
         $scriptArgs += "--prefix `"$cleanPrefix`""
