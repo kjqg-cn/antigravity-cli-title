@@ -125,12 +125,27 @@ if ($Purge) {
         }
     }
 
-    $docsDir = [Environment]::GetFolderPath('MyDocuments')
-    $candidateProfiles = @(
-        (Join-Path $docsDir 'PowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $docsDir 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+    $rawBaseDirs = @(
+        [Environment]::GetFolderPath('MyDocuments'),
+        (Join-Path $homeDir 'Documents'),
+        (Join-Path $homeDir 'OneDrive\Documents'),
+        (Join-Path $homeDir 'OneDrive\文档')
     )
-    foreach ($profPath in $candidateProfiles) {
+    $validBaseDirs = @($rawBaseDirs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } | Select-Object -Unique)
+
+    $candidateProfiles = [System.Collections.Generic.List[string]]::new()
+    if ($PROFILE) {
+        $candidateProfiles.Add([System.IO.Path]::GetFullPath($PROFILE))
+    }
+
+    foreach ($baseDir in $validBaseDirs) {
+        $candidateProfiles.Add([System.IO.Path]::GetFullPath((Join-Path $baseDir 'PowerShell\Microsoft.PowerShell_profile.ps1')))
+        $candidateProfiles.Add([System.IO.Path]::GetFullPath((Join-Path $baseDir 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')))
+    }
+
+    $uniqueProfiles = @($candidateProfiles | Select-Object -Unique)
+
+    foreach ($profPath in $uniqueProfiles) {
         if (Test-Path $profPath) {
             try {
                 $content = Get-Content $profPath -Raw -Encoding UTF8

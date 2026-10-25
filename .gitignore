@@ -25,7 +25,8 @@ desktop.ini
 scratch/
 test_*/
 
-# Compiled binaries
+# Compiled binaries & release artifacts
 *.exe
 /title
 /title_*
+dist/

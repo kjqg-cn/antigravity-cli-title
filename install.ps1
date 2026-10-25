@@ -332,15 +332,34 @@ if ($WTProfile) {
         }
     }
 
-    # 7. Configure PowerShell Profile Router (Clean & Proxy-Free)
-    $docsDir = [Environment]::GetFolderPath('MyDocuments')
-    $candidateProfiles = @(
-        (Join-Path $docsDir 'PowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $docsDir 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+    # 7. Configure PowerShell Profile Router (Dual-Compatibility: PS7 & Windows PowerShell 5.1)
+    $rawBaseDirs = @(
+        [Environment]::GetFolderPath('MyDocuments'),
+        (Join-Path $homeDir 'Documents'),
+        (Join-Path $homeDir 'OneDrive\Documents'),
+        (Join-Path $homeDir 'OneDrive\文档')
     )
+    $validBaseDirs = @($rawBaseDirs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } | Select-Object -Unique)
+
+    $hasPwsh = [bool](Get-Command pwsh.exe -ErrorAction SilentlyContinue)
+    $candidateProfiles = [System.Collections.Generic.List[string]]::new()
+    if ($PROFILE) {
+        $candidateProfiles.Add([System.IO.Path]::GetFullPath($PROFILE))
+    }
+
+    foreach ($baseDir in $validBaseDirs) {
+        $candidateProfiles.Add([System.IO.Path]::GetFullPath((Join-Path $baseDir 'PowerShell\Microsoft.PowerShell_profile.ps1')))
+        $candidateProfiles.Add([System.IO.Path]::GetFullPath((Join-Path $baseDir 'WindowsPowerShell\Microsoft.PowerShell_profile.ps1')))
+    }
+
+    $uniqueProfiles = @($candidateProfiles | Select-Object -Unique)
 
     $routerBlock = @"
 # >>> antigravity-cli-title profile router >>>
+if (Test-Path Alias:agy) { Remove-Item Alias:agy -Force -ErrorAction SilentlyContinue }
+if (Test-Path Function:\agy) {
+    Copy-Item Function:\agy Function:\__agy_original -Force -ErrorAction SilentlyContinue
+}
 function agy {
     if (`$env:AGY_ACTIVE -ne '1' -and (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
         `$wArg = if (`$env:WT_SESSION) { @("-w", "0") } else { @() }
@@ -354,32 +373,44 @@ function agy {
         }
         return
     }
-    `$realAgy = "`$env:LOCALAPPDATA\agy\bin\agy.exe"
-    if (-not (Test-Path `$realAgy)) {
-        `$found = Get-Command agy.exe -ErrorAction SilentlyContinue
-        if (`$found) { `$realAgy = `$found.Source }
+    if (Get-Command __agy_original -ErrorAction SilentlyContinue) {
+        & __agy_original @args
+    } else {
+        `$realAgy = "`$env:LOCALAPPDATA\agy\bin\agy.exe"
+        if (-not (Test-Path `$realAgy)) {
+            `$found = Get-Command agy.exe -ErrorAction SilentlyContinue
+            if (`$found) { `$realAgy = `$found.Source }
+        }
+        & `$realAgy @args
     }
-    & `$realAgy @args
 }
 # <<< antigravity-cli-title profile router <<<
 "@
 
-    foreach ($profPath in $candidateProfiles) {
+    foreach ($profPath in $uniqueProfiles) {
         $parentDir = Split-Path $profPath
-        if ((Test-Path $profPath) -or (Test-Path $parentDir)) {
+        $isPs7 = ($profPath -match '[\\/]PowerShell[\\/]')
+        $isPs5 = ($profPath -match '[\\/]WindowsPowerShell[\\/]')
+        $isCurrentProfile = ($PROFILE -and ([System.IO.Path]::GetFullPath($profPath) -eq [System.IO.Path]::GetFullPath($PROFILE)))
+
+        $shouldConfigure = (Test-Path $profPath) -or (Test-Path $parentDir) -or $isCurrentProfile -or ($isPs7 -and $hasPwsh) -or $isPs5
+        if ($shouldConfigure) {
             if (-not (Test-Path $parentDir)) { New-Item -ItemType Directory -Path $parentDir -Force | Out-Null }
             $existing = if (Test-Path $profPath) { Get-Content $profPath -Raw -Encoding UTF8 } else { "" }
             if ($existing -match '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<') {
                 $newContent = $existing -replace '# >>> antigravity-cli-title profile router >>>[\s\S]*?# <<< antigravity-cli-title profile router <<<', $routerBlock.Trim()
                 [System.IO.File]::WriteAllText($profPath, $newContent.Trim() + [Environment]::NewLine, $utf8NoBom)
                 Write-Host "[+] Updated Antigravity profile router in: $profPath" -ForegroundColor Green
-            } elseif ($existing -match 'function\s+agy\b') {
-                Write-Host "[i] Custom 'function agy' already exists in: $profPath (preserved)" -ForegroundColor Gray
             } else {
+                $hasCustomAgy = ($existing -match 'function\s+agy\b')
                 $separator = if ([string]::IsNullOrWhiteSpace($existing)) { "" } else { [Environment]::NewLine + [Environment]::NewLine }
                 $newContent = $existing.TrimEnd() + $separator + $routerBlock.Trim() + [Environment]::NewLine
                 [System.IO.File]::WriteAllText($profPath, $newContent, $utf8NoBom)
-                Write-Host "[+] Injected Antigravity profile router into: $profPath" -ForegroundColor Green
+                if ($hasCustomAgy) {
+                    Write-Host "[+] Injected Antigravity profile router into: $profPath (seamlessly wrapped your custom agy/proxy function)" -ForegroundColor Green
+                } else {
+                    Write-Host "[+] Injected Antigravity profile router into: $profPath" -ForegroundColor Green
+                }
             }
         }
     }
