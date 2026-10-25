@@ -135,7 +135,7 @@ if ($Purge) {
         [Environment]::GetFolderPath('MyDocuments'),
         (Join-Path $homeDir 'Documents'),
         (Join-Path $homeDir 'OneDrive\Documents'),
-        (Join-Path $homeDir 'OneDrive\文档')
+        (Join-Path $homeDir "OneDrive\$([char]0x6587)$([char]0x6863)")
     )
     $validBaseDirs = @($rawBaseDirs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } | Select-Object -Unique)
 
@@ -178,7 +178,7 @@ try {
     $ppid = (Get-CimInstance Win32_Process -Filter ("ProcessId = " + $PID) -ErrorAction SilentlyContinue).ParentProcessId
     $parentName = if ($ppid) { (Get-Process -Id $ppid -ErrorAction SilentlyContinue).ProcessName } else { "" }
     if ($parentName -match 'explorer') {
-        Write-Host "`n按回车键退出..." -ForegroundColor Gray
+        Write-Host "`nPress Enter to exit..." -ForegroundColor Gray
         [void][System.Console]::ReadLine()
     }
 } catch {}

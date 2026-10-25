@@ -337,7 +337,7 @@ if ($WTProfile) {
         [Environment]::GetFolderPath('MyDocuments'),
         (Join-Path $homeDir 'Documents'),
         (Join-Path $homeDir 'OneDrive\Documents'),
-        (Join-Path $homeDir 'OneDrive\文档')
+        (Join-Path $homeDir "OneDrive\$([char]0x6587)$([char]0x6863)")
     )
     $validBaseDirs = @($rawBaseDirs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } | Select-Object -Unique)
 
@@ -361,15 +361,18 @@ if (Test-Path Function:\agy) {
     Copy-Item Function:\agy Function:\__agy_original -Force -ErrorAction SilentlyContinue
 }
 function agy {
-    if (`$env:AGY_ACTIVE -ne '1' -and (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
+    `$wtCmd = if (Get-Command wt.exe -ErrorAction SilentlyContinue) { "wt.exe" } elseif (Test-Path "`$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe") { "`$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe" } else { `$null }
+    if (`$env:AGY_ACTIVE -ne '1' -and `$wtCmd) {
         `$wArg = if (`$env:WT_SESSION) { @("-w", "0") } else { @() }
         if (`$args.Count -gt 0) {
             `$argStr = (`$args | ForEach-Object { if (`$_ -match '\s') { ('"' + `$_ + '"') } else { `$_ } }) -join ' '
             `$argStr = `$argStr -replace ';', '\;'
-            `$pwsh = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
-            wt.exe @wArg nt -p "{a9191a91-a919-4a91-a919-a9191a91a919}" -d "`$PWD" `$pwsh -NoExit -Command "if (`$env:AGY_ACTIVE = '1') { agy `$argStr }"
+            `$pwsh = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
+            `$targetCmd = '`$env:AGY_ACTIVE=' + "'1'; agy"
+            if (`$argStr) { `$targetCmd += " `$argStr" }
+            & `$wtCmd @wArg nt -p "Google Antigravity" -d "`$PWD" `$pwsh -NoExit -Command `$targetCmd
         } else {
-            wt.exe @wArg nt -p "{a9191a91-a919-4a91-a919-a9191a91a919}" -d "`$PWD"
+            & `$wtCmd @wArg nt -p "Google Antigravity" -d "`$PWD"
         }
         return
     }
@@ -435,7 +438,7 @@ try {
     $ppid = (Get-CimInstance Win32_Process -Filter ("ProcessId = " + $PID) -ErrorAction SilentlyContinue).ParentProcessId
     $parentName = if ($ppid) { (Get-Process -Id $ppid -ErrorAction SilentlyContinue).ProcessName } else { "" }
     if ($parentName -match 'explorer') {
-        Write-Host "`n按回车键退出..." -ForegroundColor Gray
+        Write-Host "`nPress Enter to exit..." -ForegroundColor Gray
         [void][System.Console]::ReadLine()
     }
 } catch {}
