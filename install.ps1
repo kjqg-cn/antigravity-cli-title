@@ -121,6 +121,16 @@ function Clean-SymbolValue([string]$val) {
     return $trimmed
 }
 
+function Format-SymbolArg([string]$flag, [string]$val) {
+    if (-not $val) { return $null }
+    $clean = Clean-SymbolValue $val
+    if (-not $clean) { return $null }
+    if ($clean -match '\s') {
+        return "$flag `"$clean`""
+    }
+    return "$flag $clean"
+}
+
 # 4. Build Title Command
 $scriptArgs = @()
 if ($NoPrefix) { $scriptArgs += "--no-prefix" }
@@ -135,6 +145,23 @@ if ($Prefix -ne "agy:") {
 }
 if ($MaxLength -ne 35) { $scriptArgs += "--max-length $MaxLength" }
 if ($TaskTimeout -ne 60) { $scriptArgs += "--task-timeout $TaskTimeout" }
+
+if ($ReadySymbol) {
+    $arg = Format-SymbolArg "--ready" $ReadySymbol
+    if ($arg) { $scriptArgs += $arg }
+}
+if ($WorkingSymbol) {
+    $arg = Format-SymbolArg "--working" $WorkingSymbol
+    if ($arg) { $scriptArgs += $arg }
+}
+if ($WaitingSymbol) {
+    $arg = Format-SymbolArg "--waiting" $WaitingSymbol
+    if ($arg) { $scriptArgs += $arg }
+}
+if ($DoneSymbol) {
+    $arg = Format-SymbolArg "--done" $DoneSymbol
+    if ($arg) { $scriptArgs += $arg }
+}
 
 $argsPart = if ($scriptArgs.Count -gt 0) { " " + ($scriptArgs -join " ") } else { "" }
 $destExeNormalized = $destExe -replace '\\', '/'
@@ -165,30 +192,12 @@ if (Test-Path $settingsPath) {
     }
 }
 
-# Add or update "title" block
+# Add or update "title" block (Native white-listed structure to survive agy restarts)
 $titleConfig = [ordered]@{
     "type" = "command"
     "command" = $titleCmd
     "enabled" = $true
 }
-
-$cleanReady = Clean-SymbolValue $ReadySymbol
-$cleanWorking = Clean-SymbolValue $WorkingSymbol
-$cleanWaiting = Clean-SymbolValue $WaitingSymbol
-$cleanDone = Clean-SymbolValue $DoneSymbol
-
-# Preserve existing symbols in settings.json if not explicitly provided
-if ($settingsObj -and $settingsObj.title) {
-    if (-not $cleanReady -and $settingsObj.title.ready) { $cleanReady = $settingsObj.title.ready }
-    if (-not $cleanWorking -and $settingsObj.title.working) { $cleanWorking = $settingsObj.title.working }
-    if (-not $cleanWaiting -and $settingsObj.title.waiting) { $cleanWaiting = $settingsObj.title.waiting }
-    if (-not $cleanDone -and $settingsObj.title.done) { $cleanDone = $settingsObj.title.done }
-}
-
-if ($cleanReady) { $titleConfig["ready"] = $cleanReady }
-if ($cleanWorking) { $titleConfig["working"] = $cleanWorking }
-if ($cleanWaiting) { $titleConfig["waiting"] = $cleanWaiting }
-if ($cleanDone) { $titleConfig["done"] = $cleanDone }
 
 if ($settingsObj -is [PSCustomObject] -or $settingsObj -is [System.Collections.IDictionary]) {
     $settingsObj | Add-Member -NotePropertyName "title" -NotePropertyValue $titleConfig -Force

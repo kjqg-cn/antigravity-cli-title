@@ -125,35 +125,24 @@ The installation automatically updates `~/.gemini/antigravity-cli/settings.json`
 }
 ```
 
-### Custom Configuration & Instant Hot-Reload
+### Custom State Symbols & Instant Hot-Reload
 
-Supports two configuration approaches with automatic fallback:
-
-```
-🥇 CLI Flag > 🥈 settings.json Property > 🥉 Built-in Preset
-```
-
-#### Approach A: Configure Independent Keys in `settings.json` (Recommended: Hot-Reload, 0 Restart, No Backslashes)
-
-Add status keys directly to the `title` block in `~/.gemini/antigravity-cli/settings.json`. Since this avoids command escaping and is loaded dynamically on each event, **changes take effect on the very next action without restarting `agy`**:
+You can specify symbols via installer parameters (e.g. `-WaitingSymbol 🔔`) or append flags to the `command` field in `settings.json`:
 
 ```json
 {
   "title": {
     "type": "command",
-    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe --no-prefix",
-    "enabled": true,
-    "waiting": "🔔",
-    "working": "⚡",
-    "ready": "⚪",
-    "done": "✅"
+    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe --no-prefix --waiting 🔔 --working ⚡",
+    "enabled": true
   }
 }
 ```
 
-#### Approach B: Command-line Arguments (CLI Flags)
-
-You can also specify symbols via installer parameters (e.g. `-WaitingSymbol 🔔`) or append flags to the `command` field:
+> [!NOTE]
+> **Instant Hot-Reload (0 Restart Needed)**: `title.exe` dynamically parses the latest arguments in `settings.json`'s `command` field on every single telemetry event. Changes take effect on the very next action without restarting `agy`!
+>
+> **Why avoid standalone JSON properties?**: Antigravity CLI enforces a strict whitelist struct schema when rewriting `settings.json` upon CLI restarts or config updates, which automatically purges unknown custom properties. Configuring parameters inside the native `command` field is the only persistent, wipe-proof approach.
 
 | Flag | Example | Description |
 | :--- | :--- | :--- |
@@ -168,7 +157,7 @@ You can also specify symbols via installer parameters (e.g. `-WaitingSymbol 🔔
 | `--done <str>` | `title.exe --done 🎉` | Overrides Done state symbol/indicator (default: `✅` or `[DONE]`). |
 
 > [!TIP]
-> **Quotes & Backslash Safety**: When configuring flags in the `command` string, standard emojis or single words **do not need quotes** (e.g. `--waiting 🔔`). This avoids creating harmful `\"` backslash escapes inside JSON strings. Only use quotes when values contain spaces (e.g. `--prefix "My Bot"`). For the cleanest setup, **Approach A** (independent JSON keys) is strongly recommended.
+> **Zero-Backslash Safety**: When configuring flags in the `command` string, standard single emojis or words without whitespace **do not need quotes** (e.g. `--waiting 🔔`). This completely eliminates harmful `\"` backslash escapes inside JSON strings. Only use quotes when values contain spaces (e.g. `--prefix "My Bot"`).
 
 ---
 

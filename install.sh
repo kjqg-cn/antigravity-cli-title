@@ -156,6 +156,22 @@ fi
 [[ "$MAX_LEN" != 35 ]] && ARGS="${ARGS} --max-length $MAX_LEN"
 [[ "$TASK_TIMEOUT" != 60 ]] && ARGS="${ARGS} --task-timeout $TASK_TIMEOUT"
 
+append_symbol_arg() {
+    local flag="$1"
+    local val="$2"
+    [[ -z "$val" ]] && return
+    if [[ "$val" =~ [[:space:]] ]]; then
+        ARGS="${ARGS} ${flag} \"${val}\""
+    else
+        ARGS="${ARGS} ${flag} ${val}"
+    fi
+}
+
+append_symbol_arg "--ready" "$READY_SYMBOL"
+append_symbol_arg "--working" "$WORKING_SYMBOL"
+append_symbol_arg "--waiting" "$WAITING_SYMBOL"
+append_symbol_arg "--done" "$DONE_SYMBOL"
+
 TITLE_CMD="${DEST_EXE}${ARGS}"
 
 # 4. Update settings.json
@@ -174,10 +190,6 @@ import json, os
 
 settings_path = '$SETTINGS_PATH'
 title_cmd = '$TITLE_CMD'
-ready_sym = '''$READY_SYMBOL'''
-working_sym = '''$WORKING_SYMBOL'''
-waiting_sym = '''$WAITING_SYMBOL'''
-done_sym = '''$DONE_SYMBOL'''
 
 data = {}
 if os.path.exists(settings_path):
@@ -187,28 +199,11 @@ if os.path.exists(settings_path):
     except Exception:
         data = {}
 
-existing_title = data.get('title', {})
-if not isinstance(existing_title, dict):
-    existing_title = {}
-
-title_block = {
+data['title'] = {
     'type': 'command',
     'command': title_cmd,
     'enabled': True
 }
-
-# Preserve existing or apply new
-r = ready_sym or existing_title.get('ready', '')
-w = working_sym or existing_title.get('working', '')
-wt = waiting_sym or existing_title.get('waiting', '')
-d = done_sym or existing_title.get('done', '')
-
-if r: title_block['ready'] = r
-if w: title_block['working'] = w
-if wt: title_block['waiting'] = wt
-if d: title_block['done'] = d
-
-data['title'] = title_block
 
 with open(settings_path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2, ensure_ascii=False)

@@ -125,35 +125,24 @@ cd antigravity-cli-title
 }
 ```
 
-### 自定义配置与即时热重载（Hot-Reload）
+### 自定义状态标识与即时热重载（Hot-Reload）
 
-支持以下两种配置方式，优先级从高到低自动回退：
-
-```
-🥇 命令行参数（CLI Flag） > 🥈 settings.json 独立属性 > 🥉 默认预设标识
-```
-
-#### 方式 A：在 `settings.json` 中配置独立 Key（推荐：改完即生效，0 重启，零转义）
-
-直接在 `~/.gemini/antigravity-cli/settings.json` 的 `title` 块中添加状态 key。由于没有反斜杠转义问题，且在运行时实时动态读取，**改完保存后下个动作立刻生效，完全无需重启 `agy`**：
+你可以直接通过安装脚本传参（如 `-WaitingSymbol 🔔`），或在 `settings.json` 的 `command` 字段中追加参数来自由定制各状态指示器：
 
 ```json
 {
   "title": {
     "type": "command",
-    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe --no-prefix",
-    "enabled": true,
-    "waiting": "🔔",
-    "working": "⚡",
-    "ready": "⚪",
-    "done": "✅"
+    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe --no-prefix --waiting 🔔 --working ⚡",
+    "enabled": true
   }
 }
 ```
 
-#### 方式 B：通过命令行参数（CLI Flags）配置
-
-也可以直接通过安装脚本参数（如 `-WaitingSymbol 🔔`）或在 `command` 字段中追加参数传递：
+> [!NOTE]
+> **免重启即时热生效（Hot-Reload）**：`title.exe` 在运行时会实时动态解析 `settings.json` 中 `command` 的最新参数。修改保存后，**下一个动作立即换用新图标，完全无需重启 `agy`**！
+>
+> **为什么不配置独立 JSON 属性？**：官方 `agy` 拥有强类型结构体白名单序列化机制，在会话重启或更新配置写盘时，会将未在官方结构体中声明的未知 key 自动清除。因此将参数安全配置在官方合法的 `command` 字段中是最稳固、防清洗的标准实践。
 
 | 参数选项 | 示例 | 作用说明 |
 | :--- | :--- | :--- |
@@ -168,7 +157,7 @@ cd antigravity-cli-title
 | `--done <str>` | `title.exe --done 🎉` | 自定义完成（Done）状态图标/字符（默认：`✅` 或 `[DONE]`）。 |
 
 > [!TIP]
-> **引号与反斜杠注意事项**：在 `command` 命令行中配置时，常规 Emoji 或无空格的字符**无需添加任何引号**（直接写 `--waiting 🔔` 即可），这样可彻底避免在 JSON 内部产生 `\"` 转义反斜杠；仅当参数值包含空格（如 `--prefix "My Bot"`）时才需要引号包裹。更推荐使用 **方式 A** 在独立属性中配置。
+> **零反斜杠安全规范**：在 `command` 命令行中配置时，常规单个 Emoji 或无空格的字符**无需添加任何引号**（直接写 `--waiting 🔔` 即可），这样可彻底杜绝在 JSON 内部产生 `\"` 转义反斜杠；仅当参数值包含空格（如 `--prefix "My Bot"`）时才需要引号包裹。
 
 ---
 

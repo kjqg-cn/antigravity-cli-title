@@ -164,9 +164,10 @@ This project is actively maintained and evolved by the user. Future agents shoul
   - Implemented configurable state indicators via `--ready`, `--working`, `--waiting`, and `--done` CLI flags.
   - Supports individual or full symbol overrides across both emoji and text modes with zero runtime overhead.
 - [x] **Config Hot-Reload & Zero-Backslash Safety**:
-  - Direct independent keys in `settings.json` (`ready`, `working`, `waiting`, `done`) with instant runtime hot-reload (0 restart needed).
+  - Hot-reload via `settings.json` `title.command` dynamic argument parsing with instant runtime reflection (0 restart needed).
+  - Standalone custom JSON keys in `title` are avoided because Antigravity CLI's native Go schema purges unwhitelisted properties upon CLI restarts/rewrites.
   - Robust quote stripping (`cleanSymbol`) and space-aware argument handling to eliminate harmful `\"` backslash escapes in `command`.
-  - Multi-tier priority resolution: `CLI Flag > settings.json property > settings.json command string > Built-in preset`.
+  - Multi-tier priority resolution: `CLI Flag > settings.json command string > Built-in preset`.
 - [-] **Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
   - Fully tested and evaluated: Windows Terminal's native WinUI ProgressRing forces system accent color (blue, breaking yellow warning indication) and occludes the tab profile icon. Dropped in favor of pure 4-state Emoji in title.
 - [ ] **Linux / macOS Terminal Enhancements**:
