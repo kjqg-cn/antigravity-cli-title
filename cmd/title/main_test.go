@@ -100,3 +100,99 @@ func TestHasRecentlyActiveTasks(t *testing.T) {
 		t.Errorf("Expected false when log file is older than 60s")
 	}
 }
+
+func TestResolveStatusSymbols(t *testing.T) {
+	// 1. Default emoji symbols
+	s1 := resolveStatusSymbols(false, "", "", "", "")
+	if s1.Ready != "⚪" || s1.Working != "⚙️" || s1.Waiting != "⚠️" || s1.Done != "✅" {
+		t.Errorf("Unexpected default symbols: %+v", s1)
+	}
+
+	// 2. Default text symbols
+	s2 := resolveStatusSymbols(true, "", "", "", "")
+	if s2.Ready != "[READY]" || s2.Working != "[WORKING]" || s2.Waiting != "[WAITING]" || s2.Done != "[DONE]" {
+		t.Errorf("Unexpected text symbols: %+v", s2)
+	}
+
+	// 3. Custom symbols override defaults
+	s3 := resolveStatusSymbols(false, "💤", "⚡", "🔔", "🎉")
+	if s3.Ready != "💤" || s3.Working != "⚡" || s3.Waiting != "🔔" || s3.Done != "🎉" {
+		t.Errorf("Unexpected custom symbols: %+v", s3)
+	}
+
+	// 4. Partial custom overrides with text mode
+	s4 := resolveStatusSymbols(true, "", "RUNNING", "", "SUCCESS")
+	if s4.Ready != "[READY]" || s4.Working != "RUNNING" || s4.Waiting != "[WAITING]" || s4.Done != "SUCCESS" {
+		t.Errorf("Unexpected partial text override symbols: %+v", s4)
+	}
+}
+
+func TestCleanSymbol(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"", ""},
+		{"🔔", "🔔"},
+		{"  🔔  ", "🔔"},
+		{"\"🔔\"", "🔔"},
+		{"'🔔'", "🔔"},
+		{"\"[WAITING]\"", "[WAITING]"},
+		{"'WAITING'", "WAITING"},
+		{"\"  🔔  \"", "🔔"},
+		{"\"\"", ""},
+		{"''", ""},
+	}
+
+	for _, tt := range tests {
+		actual := cleanSymbol(tt.input)
+		if actual != tt.expected {
+			t.Errorf("cleanSymbol(%q) = %q, expected %q", tt.input, actual, tt.expected)
+		}
+	}
+}
+
+func TestResolveConfiguredSymbolsPriority(t *testing.T) {
+	cfg := &TitleConfig{
+		Ready:   "🟢",
+		Working: "🛠️",
+		Waiting: "\"🔔\"", // quoted in config
+		Done:    "🏁",
+	}
+
+	// 1. Config applies when CLI flags are empty
+	s1 := resolveConfiguredSymbols(false, "", "", "", "", cfg)
+	if s1.Ready != "🟢" || s1.Working != "🛠️" || s1.Waiting != "🔔" || s1.Done != "🏁" {
+		t.Errorf("Expected config to apply, got: %+v", s1)
+	}
+
+	// 2. CLI flags override config
+	s2 := resolveConfiguredSymbols(false, "'⚪'", "", "⚠️", "", cfg)
+	if s2.Ready != "⚪" {
+		t.Errorf("Expected CLI override for Ready ('⚪' -> '⚪'), got: %s", s2.Ready)
+	}
+	if s2.Working != "🛠️" {
+		t.Errorf("Expected config value for Working, got: %s", s2.Working)
+	}
+	if s2.Waiting != "⚠️" {
+		t.Errorf("Expected CLI override for Waiting, got: %s", s2.Waiting)
+	}
+	// 3. Command string hot-reload test (when user edits command field directly in settings.json)
+	cfgCmd := &TitleConfig{
+		Command: "C:/path/title.exe --no-prefix --working ⚡ --done 🎉",
+		Waiting: "🔔", // direct key overrides
+	}
+	s3 := resolveConfiguredSymbols(false, "", "", "", "", cfgCmd)
+	if s3.Working != "⚡" {
+		t.Errorf("Expected Working to be parsed from Command string, got: %s", s3.Working)
+	}
+	if s3.Done != "🎉" {
+		t.Errorf("Expected Done to be parsed from Command string, got: %s", s3.Done)
+	}
+	if s3.Waiting != "🔔" {
+		t.Errorf("Expected Waiting to be direct key override, got: %s", s3.Waiting)
+	}
+	if s3.Ready != "⚪" {
+		t.Errorf("Expected Ready to fallback to default, got: %s", s3.Ready)
+	}
+}

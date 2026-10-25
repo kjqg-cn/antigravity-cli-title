@@ -5,6 +5,10 @@ param(
     [string]$Prefix = "agy:",
     [int]$MaxLength = 35,
     [int]$TaskTimeout = 60,
+    [string]$ReadySymbol = "",
+    [string]$WorkingSymbol = "",
+    [string]$WaitingSymbol = "",
+    [string]$DoneSymbol = "",
     [switch]$WTProfile
 )
 
@@ -106,11 +110,29 @@ if (Test-Path $localAssets) {
     } catch {}
 }
 
+function Clean-SymbolValue([string]$val) {
+    if (-not $val) { return "" }
+    $trimmed = $val.Trim()
+    if (($trimmed.StartsWith('"') -and $trimmed.EndsWith('"')) -or ($trimmed.StartsWith("'") -and $trimmed.EndsWith("'"))) {
+        if ($trimmed.Length -ge 2) {
+            $trimmed = $trimmed.Substring(1, $trimmed.Length - 2).Trim()
+        }
+    }
+    return $trimmed
+}
+
 # 4. Build Title Command
 $scriptArgs = @()
 if ($NoPrefix) { $scriptArgs += "--no-prefix" }
 if ($Text) { $scriptArgs += "--text" }
-if ($Prefix -ne "agy:") { $scriptArgs += "--prefix `"$Prefix`"" }
+if ($Prefix -ne "agy:") {
+    $cleanPrefix = Clean-SymbolValue $Prefix
+    if ($cleanPrefix -match '\s') {
+        $scriptArgs += "--prefix `"$cleanPrefix`""
+    } else {
+        $scriptArgs += "--prefix $cleanPrefix"
+    }
+}
 if ($MaxLength -ne 35) { $scriptArgs += "--max-length $MaxLength" }
 if ($TaskTimeout -ne 60) { $scriptArgs += "--task-timeout $TaskTimeout" }
 
@@ -149,6 +171,24 @@ $titleConfig = [ordered]@{
     "command" = $titleCmd
     "enabled" = $true
 }
+
+$cleanReady = Clean-SymbolValue $ReadySymbol
+$cleanWorking = Clean-SymbolValue $WorkingSymbol
+$cleanWaiting = Clean-SymbolValue $WaitingSymbol
+$cleanDone = Clean-SymbolValue $DoneSymbol
+
+# Preserve existing symbols in settings.json if not explicitly provided
+if ($settingsObj -and $settingsObj.title) {
+    if (-not $cleanReady -and $settingsObj.title.ready) { $cleanReady = $settingsObj.title.ready }
+    if (-not $cleanWorking -and $settingsObj.title.working) { $cleanWorking = $settingsObj.title.working }
+    if (-not $cleanWaiting -and $settingsObj.title.waiting) { $cleanWaiting = $settingsObj.title.waiting }
+    if (-not $cleanDone -and $settingsObj.title.done) { $cleanDone = $settingsObj.title.done }
+}
+
+if ($cleanReady) { $titleConfig["ready"] = $cleanReady }
+if ($cleanWorking) { $titleConfig["working"] = $cleanWorking }
+if ($cleanWaiting) { $titleConfig["waiting"] = $cleanWaiting }
+if ($cleanDone) { $titleConfig["done"] = $cleanDone }
 
 if ($settingsObj -is [PSCustomObject] -or $settingsObj -is [System.Collections.IDictionary]) {
     $settingsObj | Add-Member -NotePropertyName "title" -NotePropertyValue $titleConfig -Force

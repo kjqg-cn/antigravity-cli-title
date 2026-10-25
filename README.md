@@ -125,17 +125,50 @@ The installation automatically updates `~/.gemini/antigravity-cli/settings.json`
 }
 ```
 
-### Custom CLI Flags
+### Custom Configuration & Instant Hot-Reload
 
-You can customize the command behavior by appending flags in `settings.json`:
+Supports two configuration approaches with automatic fallback:
+
+```
+🥇 CLI Flag > 🥈 settings.json Property > 🥉 Built-in Preset
+```
+
+#### Approach A: Configure Independent Keys in `settings.json` (Recommended: Hot-Reload, 0 Restart, No Backslashes)
+
+Add status keys directly to the `title` block in `~/.gemini/antigravity-cli/settings.json`. Since this avoids command escaping and is loaded dynamically on each event, **changes take effect on the very next action without restarting `agy`**:
+
+```json
+{
+  "title": {
+    "type": "command",
+    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe --no-prefix",
+    "enabled": true,
+    "waiting": "🔔",
+    "working": "⚡",
+    "ready": "⚪",
+    "done": "✅"
+  }
+}
+```
+
+#### Approach B: Command-line Arguments (CLI Flags)
+
+You can also specify symbols via installer parameters (e.g. `-WaitingSymbol 🔔`) or append flags to the `command` field:
 
 | Flag | Example | Description |
 | :--- | :--- | :--- |
 | `--no-prefix` | `title.exe --no-prefix` | Hides the leading `agy: ` tag (output: `✅ Refactor login`). |
-| `--prefix <str>` | `title.exe --prefix "🤖"` | Customizes the prefix tag. |
+| `--prefix <str>` | `title.exe --prefix 🤖` | Customizes the prefix tag. |
 | `--text` / `--classic` | `title.exe --text` | Uses ASCII text indicators like `[DONE]` instead of emojis. |
 | `--max-length <n>` | `title.exe --max-length 40` | Sets max character length for truncated titles (default: 35). |
 | `--task-timeout <n>` | `title.exe --task-timeout 60` | Background task silence threshold in seconds before auto-releasing to DONE (default: 60). |
+| `--ready <str>` | `title.exe --ready 💤` | Overrides Ready state symbol/indicator (default: `⚪` or `[READY]`). |
+| `--working <str>` | `title.exe --working ⚡` | Overrides Working state symbol/indicator (default: `⚙️` or `[WORKING]`). |
+| `--waiting <str>` | `title.exe --waiting 🔔` | Overrides Waiting state symbol/indicator (default: `⚠️` or `[WAITING]`). |
+| `--done <str>` | `title.exe --done 🎉` | Overrides Done state symbol/indicator (default: `✅` or `[DONE]`). |
+
+> [!TIP]
+> **Quotes & Backslash Safety**: When configuring flags in the `command` string, standard emojis or single words **do not need quotes** (e.g. `--waiting 🔔`). This avoids creating harmful `\"` backslash escapes inside JSON strings. Only use quotes when values contain spaces (e.g. `--prefix "My Bot"`). For the cleanest setup, **Approach A** (independent JSON keys) is strongly recommended.
 
 ---
 

@@ -44,8 +44,19 @@ type Permissions struct {
 	Ask   []string `json:"ask"`
 }
 
+type TitleConfig struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+	Enabled bool   `json:"enabled"`
+	Ready   string `json:"ready"`
+	Working string `json:"working"`
+	Waiting string `json:"waiting"`
+	Done    string `json:"done"`
+}
+
 type Settings struct {
 	Permissions *Permissions `json:"permissions"`
+	Title       *TitleConfig `json:"title"`
 }
 
 var (
@@ -79,6 +90,10 @@ func unescapeCommand(cmd string) string {
 	cmd = strings.ReplaceAll(cmd, `\t`, "\t")
 	cmd = strings.ReplaceAll(cmd, `\"`, `"`)
 	return cmd
+}
+
+type stepHeader struct {
+	Type string `json:"type"`
 }
 
 func parseTranscriptTail(transcriptPath string) (*PlannerResponse, error) {
@@ -120,24 +135,29 @@ func parseTranscriptTail(transcriptPath string) (*PlannerResponse, error) {
 		if len(line) == 0 || line[0] != '{' || line[len(line)-1] != '}' {
 			continue
 		}
-		var raw map[string]interface{}
-		if err := json.Unmarshal(line, &raw); err == nil {
-			stepType, _ := raw["type"].(string)
-			if stepType == "GENERIC" {
-				hasGenericAfterPlanner = true
+
+		var hdr stepHeader
+		if err := json.Unmarshal(line, &hdr); err != nil {
+			continue
+		}
+
+		if hdr.Type == "GENERIC" {
+			hasGenericAfterPlanner = true
+			continue
+		}
+
+		if hdr.Type == "PLANNER_RESPONSE" {
+			if hasGenericAfterPlanner {
+				return nil, nil
 			}
-			if stepType == "PLANNER_RESPONSE" {
-				if hasGenericAfterPlanner {
-					return nil, nil
-				}
-				var pr PlannerResponse
-				if err := json.Unmarshal(line, &pr); err == nil {
-					return &pr, nil
-				}
+			var pr PlannerResponse
+			if err := json.Unmarshal(line, &pr); err == nil {
+				return &pr, nil
 			}
-			if stepType == "USER_INPUT" {
-				break
-			}
+		}
+
+		if hdr.Type == "USER_INPUT" {
+			break
 		}
 	}
 	return nil, nil
@@ -271,12 +291,129 @@ func cleanStdin(b []byte) []byte {
 	return b
 }
 
+type StatusSymbols struct {
+	Ready   string
+	Working string
+	Waiting string
+	Done    string
+}
+
+func cleanSymbol(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+		}
+	}
+	return s
+}
+
+func parseCommandFlags(cmdStr string) (ready, working, waiting, done string) {
+	parts := strings.Fields(cmdStr)
+	for i := 0; i < len(parts); i++ {
+		arg := strings.ToLower(parts[i])
+		switch arg {
+		case "--ready", "--ready-symbol":
+			if i+1 < len(parts) {
+				ready = parts[i+1]
+				i++
+			}
+		case "--working", "--working-symbol":
+			if i+1 < len(parts) {
+				working = parts[i+1]
+				i++
+			}
+		case "--waiting", "--waiting-symbol":
+			if i+1 < len(parts) {
+				waiting = parts[i+1]
+				i++
+			}
+		case "--done", "--done-symbol":
+			if i+1 < len(parts) {
+				done = parts[i+1]
+				i++
+			}
+		}
+	}
+	return
+}
+
+func resolveStatusSymbols(useTextStatus bool, customReady, customWorking, customWaiting, customDone string) StatusSymbols {
+	return resolveConfiguredSymbols(useTextStatus, customReady, customWorking, customWaiting, customDone, nil)
+}
+
+func resolveConfiguredSymbols(useTextStatus bool, cliReady, cliWorking, cliWaiting, cliDone string, cfg *TitleConfig) StatusSymbols {
+	s := StatusSymbols{
+		Ready:   "⚪",
+		Working: "⚙️",
+		Waiting: "⚠️",
+		Done:    "✅",
+	}
+	if useTextStatus {
+		s.Ready = "[READY]"
+		s.Working = "[WORKING]"
+		s.Waiting = "[WAITING]"
+		s.Done = "[DONE]"
+	}
+
+	if cfg != nil {
+		// 1. Hot-reload flags from settings.json "command" string
+		cmdReady, cmdWorking, cmdWaiting, cmdDone := parseCommandFlags(cfg.Command)
+		if r := cleanSymbol(cmdReady); r != "" {
+			s.Ready = r
+		}
+		if w := cleanSymbol(cmdWorking); w != "" {
+			s.Working = w
+		}
+		if wt := cleanSymbol(cmdWaiting); wt != "" {
+			s.Waiting = wt
+		}
+		if d := cleanSymbol(cmdDone); d != "" {
+			s.Done = d
+		}
+
+		// 2. Direct keys in settings.json have higher priority than "command" string flags
+		if r := cleanSymbol(cfg.Ready); r != "" {
+			s.Ready = r
+		}
+		if w := cleanSymbol(cfg.Working); w != "" {
+			s.Working = w
+		}
+		if wt := cleanSymbol(cfg.Waiting); wt != "" {
+			s.Waiting = wt
+		}
+		if d := cleanSymbol(cfg.Done); d != "" {
+			s.Done = d
+		}
+	}
+
+	// 3. Explicit CLI flags override settings.json
+	if r := cleanSymbol(cliReady); r != "" {
+		s.Ready = r
+	}
+	if w := cleanSymbol(cliWorking); w != "" {
+		s.Working = w
+	}
+	if wt := cleanSymbol(cliWaiting); wt != "" {
+		s.Waiting = wt
+	}
+	if d := cleanSymbol(cliDone); d != "" {
+		s.Done = d
+	}
+
+	return s
+}
+
 func main() {
 	showPrefix := true
 	customPrefix := "agy:"
 	useTextStatus := false
 	maxTitleLen := 35
 	taskTimeout := 60 * time.Second
+	customReady := ""
+	customWorking := ""
+	customWaiting := ""
+	customDone := ""
 
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
@@ -306,23 +443,40 @@ func main() {
 				showPrefix = true
 				i++
 			}
+		case "--ready", "--ready-symbol":
+			if i+1 < len(args) {
+				customReady = args[i+1]
+				i++
+			}
+		case "--working", "--working-symbol":
+			if i+1 < len(args) {
+				customWorking = args[i+1]
+				i++
+			}
+		case "--waiting", "--waiting-symbol":
+			if i+1 < len(args) {
+				customWaiting = args[i+1]
+				i++
+			}
+		case "--done", "--done-symbol":
+			if i+1 < len(args) {
+				customDone = args[i+1]
+				i++
+			}
 		}
 	}
 
+	// 1. Drain stdin immediately to release parent pipe without IPC blocking
 	inputBytes, _ := io.ReadAll(os.Stdin)
 	inputBytes = cleanStdin(inputBytes)
 	if len(bytes.TrimSpace(inputBytes)) == 0 {
 		cwd, _ := os.Getwd()
 		cwdName := filepath.Base(cwd)
-		ind := "⚪"
-		if useTextStatus {
-			ind = "[READY]"
-		}
 		pStr := ""
 		if showPrefix {
 			pStr = customPrefix + " "
 		}
-		fmt.Printf("%s%s %s\n", pStr, ind, cwdName)
+		fmt.Printf("%s⚪ %s\n", pStr, cwdName)
 		return
 	}
 
@@ -330,17 +484,28 @@ func main() {
 	if err := json.Unmarshal(inputBytes, &data); err != nil {
 		cwd, _ := os.Getwd()
 		cwdName := filepath.Base(cwd)
-		ind := "⚪"
-		if useTextStatus {
-			ind = "[READY]"
-		}
 		pStr := ""
 		if showPrefix {
 			pStr = customPrefix + " "
 		}
-		fmt.Printf("%s%s %s\n", pStr, ind, cwdName)
+		fmt.Printf("%s⚪ %s\n", pStr, cwdName)
 		return
 	}
+
+	// 2. Fast light-weight title config extraction (avoid parsing heavy permissions)
+	homeDir, _ := os.UserHomeDir()
+	settingsPath := filepath.Join(homeDir, ".gemini", "antigravity-cli", "settings.json")
+	var titleCfg *TitleConfig
+	if sf, err := os.ReadFile(settingsPath); err == nil {
+		var sobj struct {
+			Title *TitleConfig `json:"title"`
+		}
+		if err := json.Unmarshal(sf, &sobj); err == nil {
+			titleCfg = sobj.Title
+		}
+	}
+
+	symbols := resolveConfiguredSymbols(useTextStatus, customReady, customWorking, customWaiting, customDone, titleCfg)
 
 	activeSubagents := 0
 	for _, sub := range data.Subagents {
@@ -369,7 +534,6 @@ func main() {
 	title := ""
 	hasHistory := false
 	transcriptPath := ""
-	homeDir, _ := os.UserHomeDir()
 	convID := strings.TrimSpace(data.ConversationID)
 
 	if data.TranscriptPath != "" {
@@ -440,10 +604,7 @@ func main() {
 		}
 	}
 
-	statusIndicator := "⚪"
-	if useTextStatus {
-		statusIndicator = "[READY]"
-	}
+	statusIndicator := symbols.Ready
 
 	agentState := strings.ToLower(strings.TrimSpace(data.AgentState))
 	if agentState == "" {
@@ -465,39 +626,36 @@ func main() {
 
 	switch agentState {
 	case "thinking", "working":
-		statusIndicator = "⚙️"
-		if useTextStatus {
-			statusIndicator = "[WORKING]"
-		}
+		statusIndicator = symbols.Working
 		writeMarker("RUNNING")
 
 	case "waiting", "paused":
-		statusIndicator = "⚠️"
-		if useTextStatus {
-			statusIndicator = "[WAITING]"
-		}
+		statusIndicator = symbols.Waiting
 		writeMarker("RUNNING")
 
 	case "tool_use":
-		statusIndicator = "⚙️"
-		if useTextStatus {
-			statusIndicator = "[WORKING]"
-		}
+		statusIndicator = symbols.Working
 		writeMarker("RUNNING")
 
 		if transcriptPath != "" {
 			pr, err := parseTranscriptTail(transcriptPath)
 			if err == nil && pr != nil && len(pr.ToolCalls) > 0 {
-				settingsPath := filepath.Join(homeDir, ".gemini", "antigravity-cli", "settings.json")
-				var perms *Permissions
-				if sf, err := os.ReadFile(settingsPath); err == nil {
-					var sobj Settings
-					if err := json.Unmarshal(sf, &sobj); err == nil {
-						perms = sobj.Permissions
-					}
-				}
-
 				isWaitingForUser := false
+
+				var perms *Permissions
+				loadPerms := func() *Permissions {
+					if perms == nil {
+						if sf, err := os.ReadFile(settingsPath); err == nil {
+							var sobj struct {
+								Permissions *Permissions `json:"permissions"`
+							}
+							if err := json.Unmarshal(sf, &sobj); err == nil {
+								perms = sobj.Permissions
+							}
+						}
+					}
+					return perms
+				}
 
 				for _, tc := range pr.ToolCalls {
 					toolName := tc.Name
@@ -509,6 +667,7 @@ func main() {
 						break
 					}
 
+					perms := loadPerms()
 					if perms != nil {
 						if toolName == "run_command" && tc.Args != nil {
 							if rawCmd, ok := tc.Args["CommandLine"]; ok && rawCmd != nil {
@@ -652,10 +811,7 @@ func main() {
 				}
 
 				if isWaitingForUser {
-					statusIndicator = "⚠️"
-					if useTextStatus {
-						statusIndicator = "[WAITING]"
-					}
+					statusIndicator = symbols.Waiting
 				}
 			}
 		}
@@ -667,16 +823,10 @@ func main() {
 		}
 
 		if activeSubagents > 0 || hasActiveBgTasks {
-			statusIndicator = "⚙️"
-			if useTextStatus {
-				statusIndicator = "[WORKING]"
-			}
+			statusIndicator = symbols.Working
 			writeMarker("RUNNING")
 		} else {
-			statusIndicator = "⚪"
-			if useTextStatus {
-				statusIndicator = "[READY]"
-			}
+			statusIndicator = symbols.Ready
 			if hasHistory && convID != "" && markerPath != "" {
 				if mf, err := os.ReadFile(markerPath); err == nil {
 					content := strings.TrimSpace(string(mf))
@@ -685,10 +835,7 @@ func main() {
 						savedPid := parts[0]
 						savedTicks := parts[1]
 						if strconv.Itoa(agyPid) == savedPid && strconv.FormatInt(agyTicks, 10) == savedTicks {
-							statusIndicator = "✅"
-							if useTextStatus {
-								statusIndicator = "[DONE]"
-							}
+							statusIndicator = symbols.Done
 							writeMarker("COMPLETED")
 						}
 					}

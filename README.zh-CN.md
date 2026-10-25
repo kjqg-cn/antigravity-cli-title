@@ -125,17 +125,50 @@ cd antigravity-cli-title
 }
 ```
 
-### 自定义 CLI 参数
+### 自定义配置与即时热重载（Hot-Reload）
 
-你可以通过在 `settings.json` 的 `command` 字段末尾添加参数来调整显示效果：
+支持以下两种配置方式，优先级从高到低自动回退：
+
+```
+🥇 命令行参数（CLI Flag） > 🥈 settings.json 独立属性 > 🥉 默认预设标识
+```
+
+#### 方式 A：在 `settings.json` 中配置独立 Key（推荐：改完即生效，0 重启，零转义）
+
+直接在 `~/.gemini/antigravity-cli/settings.json` 的 `title` 块中添加状态 key。由于没有反斜杠转义问题，且在运行时实时动态读取，**改完保存后下个动作立刻生效，完全无需重启 `agy`**：
+
+```json
+{
+  "title": {
+    "type": "command",
+    "command": "C:/Users/YourName/.gemini/antigravity-cli-title/title.exe --no-prefix",
+    "enabled": true,
+    "waiting": "🔔",
+    "working": "⚡",
+    "ready": "⚪",
+    "done": "✅"
+  }
+}
+```
+
+#### 方式 B：通过命令行参数（CLI Flags）配置
+
+也可以直接通过安装脚本参数（如 `-WaitingSymbol 🔔`）或在 `command` 字段中追加参数传递：
 
 | 参数选项 | 示例 | 作用说明 |
 | :--- | :--- | :--- |
 | `--no-prefix` | `title.exe --no-prefix` | 隐藏开头的 `agy: ` 标识（显示如：`✅ Refactor login`）。 |
-| `--prefix <str>` | `title.exe --prefix "🤖"` | 自定义前缀标识符。 |
+| `--prefix <str>` | `title.exe --prefix 🤖` | 自定义前缀标识符。 |
 | `--text` / `--classic` | `title.exe --text` | 使用 `[DONE]` 等纯 ASCII 文本指示器替代 Emoji 图标。 |
 | `--max-length <n>` | `title.exe --max-length 40` | 设置标题截断的最大字符长度（默认：35）。 |
 | `--task-timeout <n>` | `title.exe --task-timeout 60` | 后台异步任务输出静默超时（秒），超过此时间无新输出自动解除阻塞进入 DONE（默认：60）。 |
+| `--ready <str>` | `title.exe --ready 💤` | 自定义就绪（Ready）状态图标/字符（默认：`⚪` 或 `[READY]`）。 |
+| `--working <str>` | `title.exe --working ⚡` | 自定义运行中（Working）状态图标/字符（默认：`⚙️` 或 `[WORKING]`）。 |
+| `--waiting <str>` | `title.exe --waiting 🔔` | 自定义等待审批/交互（Waiting）状态图标/字符（默认：`⚠️` 或 `[WAITING]`）。 |
+| `--done <str>` | `title.exe --done 🎉` | 自定义完成（Done）状态图标/字符（默认：`✅` 或 `[DONE]`）。 |
+
+> [!TIP]
+> **引号与反斜杠注意事项**：在 `command` 命令行中配置时，常规 Emoji 或无空格的字符**无需添加任何引号**（直接写 `--waiting 🔔` 即可），这样可彻底避免在 JSON 内部产生 `\"` 转义反斜杠；仅当参数值包含空格（如 `--prefix "My Bot"`）时才需要引号包裹。更推荐使用 **方式 A** 在独立属性中配置。
 
 ---
 

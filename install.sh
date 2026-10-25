@@ -6,6 +6,11 @@ SHOW_PREFIX=true
 USE_TEXT=false
 CUSTOM_PREFIX="agy:"
 MAX_LEN=35
+TASK_TIMEOUT=60
+READY_SYMBOL=""
+WORKING_SYMBOL=""
+WAITING_SYMBOL=""
+DONE_SYMBOL=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -13,6 +18,11 @@ while [[ $# -gt 0 ]]; do
         --text|--classic) USE_TEXT=true; shift ;;
         --max-length) MAX_LEN="$2"; shift 2 ;;
         --prefix) CUSTOM_PREFIX="$2"; shift 2 ;;
+        --task-timeout) TASK_TIMEOUT="$2"; shift 2 ;;
+        --ready|--ready-symbol) READY_SYMBOL="$2"; shift 2 ;;
+        --working|--working-symbol) WORKING_SYMBOL="$2"; shift 2 ;;
+        --waiting|--waiting-symbol) WAITING_SYMBOL="$2"; shift 2 ;;
+        --done|--done-symbol) DONE_SYMBOL="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
@@ -117,12 +127,34 @@ if [[ "$HAS_NATIVE" == false ]]; then
     exit 1
 fi
 
+clean_symbol() {
+    local val="$1"
+    val="${val#\"}"
+    val="${val%\"}"
+    val="${val#\'}"
+    val="${val%\'}"
+    echo "$val"
+}
+
+READY_SYMBOL=$(clean_symbol "$READY_SYMBOL")
+WORKING_SYMBOL=$(clean_symbol "$WORKING_SYMBOL")
+WAITING_SYMBOL=$(clean_symbol "$WAITING_SYMBOL")
+DONE_SYMBOL=$(clean_symbol "$DONE_SYMBOL")
+
 # 3. Build arguments
 ARGS=""
 [[ "$SHOW_PREFIX" == false ]] && ARGS="${ARGS} --no-prefix"
 [[ "$USE_TEXT" == true ]] && ARGS="${ARGS} --text"
-[[ "$CUSTOM_PREFIX" != "agy:" ]] && ARGS="${ARGS} --prefix \"$CUSTOM_PREFIX\""
+if [[ "$CUSTOM_PREFIX" != "agy:" ]]; then
+    CLEAN_PREFIX=$(clean_symbol "$CUSTOM_PREFIX")
+    if [[ "$CLEAN_PREFIX" =~ [[:space:]] ]]; then
+        ARGS="${ARGS} --prefix \"$CLEAN_PREFIX\""
+    else
+        ARGS="${ARGS} --prefix $CLEAN_PREFIX"
+    fi
+fi
 [[ "$MAX_LEN" != 35 ]] && ARGS="${ARGS} --max-length $MAX_LEN"
+[[ "$TASK_TIMEOUT" != 60 ]] && ARGS="${ARGS} --task-timeout $TASK_TIMEOUT"
 
 TITLE_CMD="${DEST_EXE}${ARGS}"
 
@@ -142,6 +174,10 @@ import json, os
 
 settings_path = '$SETTINGS_PATH'
 title_cmd = '$TITLE_CMD'
+ready_sym = '''$READY_SYMBOL'''
+working_sym = '''$WORKING_SYMBOL'''
+waiting_sym = '''$WAITING_SYMBOL'''
+done_sym = '''$DONE_SYMBOL'''
 
 data = {}
 if os.path.exists(settings_path):
@@ -151,11 +187,28 @@ if os.path.exists(settings_path):
     except Exception:
         data = {}
 
-data['title'] = {
+existing_title = data.get('title', {})
+if not isinstance(existing_title, dict):
+    existing_title = {}
+
+title_block = {
     'type': 'command',
     'command': title_cmd,
     'enabled': True
 }
+
+# Preserve existing or apply new
+r = ready_sym or existing_title.get('ready', '')
+w = working_sym or existing_title.get('working', '')
+wt = waiting_sym or existing_title.get('waiting', '')
+d = done_sym or existing_title.get('done', '')
+
+if r: title_block['ready'] = r
+if w: title_block['working'] = w
+if wt: title_block['waiting'] = wt
+if d: title_block['done'] = d
+
+data['title'] = title_block
 
 with open(settings_path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2, ensure_ascii=False)

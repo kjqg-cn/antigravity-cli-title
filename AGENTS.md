@@ -160,6 +160,13 @@ This project is actively maintained and evolved by the user. Future agents shoul
   - Implemented high-res Antigravity logo assets (`assets/antigravity.png`, `assets/antigravity.ico`).
   - Added `-WTProfile` in `install.ps1` to automatically configure Windows Terminal with a dedicated "Google Antigravity" profile.
   - Implemented smart router in PowerShell `$PROFILE` so typing `agy` from any normal tab automatically opens under the Antigravity profile with dedicated logo.
+- [x] **Custom State Emoji / Text Mapping Config**:
+  - Implemented configurable state indicators via `--ready`, `--working`, `--waiting`, and `--done` CLI flags.
+  - Supports individual or full symbol overrides across both emoji and text modes with zero runtime overhead.
+- [x] **Config Hot-Reload & Zero-Backslash Safety**:
+  - Direct independent keys in `settings.json` (`ready`, `working`, `waiting`, `done`) with instant runtime hot-reload (0 restart needed).
+  - Robust quote stripping (`cleanSymbol`) and space-aware argument handling to eliminate harmful `\"` backslash escapes in `command`.
+  - Multi-tier priority resolution: `CLI Flag > settings.json property > settings.json command string > Built-in preset`.
 - [-] **Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
   - Fully tested and evaluated: Windows Terminal's native WinUI ProgressRing forces system accent color (blue, breaking yellow warning indication) and occludes the tab profile icon. Dropped in favor of pure 4-state Emoji in title.
 - [ ] **Linux / macOS Terminal Enhancements**:
