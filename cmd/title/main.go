@@ -64,7 +64,7 @@ type Settings struct {
 	Title       *TitleConfig `json:"title"`
 }
 
-const appVersion = "0.4.0"
+const appVersion = "0.4.1"
 
 var (
 	rxMultiWs       = regexp.MustCompile(`[\r\n\t]+`)
@@ -400,6 +400,7 @@ func printUsage() {
 	fmt.Println("\nOptions:")
 	fmt.Println("  --animate                Animate Working title on Windows (opt-in)")
 	fmt.Println("  --no-animate             Disable animation (also --animate=false)")
+	fmt.Println("  --trace-state            Record bounded status diagnostics without prompt content")
 	fmt.Println("  --no-prefix              Disable 'agy:' prefix in title")
 	fmt.Println("  --prefix <str>           Set custom prefix (default: 'agy:')")
 	fmt.Println("  --text, --classic        Use text indicators ([READY], [WORKING], etc.)")
@@ -634,6 +635,11 @@ func isInternalOrTempPath(p string) bool {
 }
 
 func hasRecentlyActiveTasks(homeDir, convID, transcriptPath string, timeout time.Duration) bool {
+	active, _ := taskActivity(homeDir, convID, transcriptPath, timeout)
+	return active
+}
+
+func taskActivity(homeDir, convID, transcriptPath string, timeout time.Duration) (bool, bool) {
 	now := time.Now()
 	var candidateDirs []string
 	if transcriptPath != "" {
@@ -648,12 +654,15 @@ func hasRecentlyActiveTasks(homeDir, convID, transcriptPath string, timeout time
 		)
 	}
 
+	foundLog, uncertain := false, false
 	for _, dir := range candidateDirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				uncertain = true
+			}
 			continue
 		}
-		foundLog := false
 		for i := len(entries) - 1; i >= 0; i-- {
 			e := entries[i]
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
@@ -662,15 +671,14 @@ func hasRecentlyActiveTasks(homeDir, convID, transcriptPath string, timeout time
 			foundLog = true
 			if info, err := e.Info(); err == nil {
 				if now.Sub(info.ModTime()) <= timeout {
-					return true
+					return true, true
 				}
+			} else {
+				uncertain = true
 			}
 		}
-		if foundLog {
-			return false
-		}
 	}
-	return false
+	return false, foundLog && !uncertain
 }
 
 func cleanStdin(b []byte) []byte {
@@ -1201,6 +1209,7 @@ func cleanTitleText(s string) string {
 }
 
 type ParsedFlags struct {
+	TraceState    bool
 	Animate       bool
 	ShowPrefix    *bool
 	Prefix        *string
@@ -1219,6 +1228,8 @@ func parseCommandFlags(cmdStr string) ParsedFlags {
 	for i := 0; i < len(tokens); i++ {
 		t := strings.ToLower(tokens[i])
 		switch t {
+		case "--trace-state":
+			res.TraceState = true
 		case "--animate":
 			res.Animate = true
 		case "--no-animate":
@@ -1361,6 +1372,7 @@ type StateInput struct {
 }
 
 type StateResult struct {
+	Reason          string
 	IsWorking       bool
 	StatusIndicator string
 	MarkerAction    string // "RUNNING", "COMPLETED", or ""
@@ -1375,6 +1387,7 @@ func resolveState(in StateInput) StateResult {
 	switch agentState {
 	case "thinking", "working":
 		return StateResult{
+			Reason:          "foreground",
 			StatusIndicator: in.Symbols.Working,
 			IsWorking:       true,
 			MarkerAction:    "RUNNING",
@@ -1382,6 +1395,7 @@ func resolveState(in StateInput) StateResult {
 
 	case "waiting", "paused":
 		return StateResult{
+			Reason:          "waiting",
 			StatusIndicator: in.Symbols.Waiting,
 			MarkerAction:    "RUNNING",
 		}
@@ -1583,11 +1597,13 @@ func resolveState(in StateInput) StateResult {
 
 		if isWaitingForUser {
 			return StateResult{
+				Reason:          "approval_or_input",
 				StatusIndicator: in.Symbols.Waiting,
 				MarkerAction:    "RUNNING",
 			}
 		}
 		return StateResult{
+			Reason:          "tool_use",
 			StatusIndicator: in.Symbols.Working,
 			IsWorking:       true,
 			MarkerAction:    "RUNNING",
@@ -1595,7 +1611,12 @@ func resolveState(in StateInput) StateResult {
 
 	case "idle", "inactive":
 		if in.ActiveSubagents > 0 || in.HasActiveBgTasks {
+			reason := "background_tasks"
+			if in.ActiveSubagents > 0 {
+				reason = "subagents"
+			}
 			return StateResult{
+				Reason:          reason,
 				StatusIndicator: in.Symbols.Working,
 				IsWorking:       true,
 				MarkerAction:    "RUNNING",
@@ -1609,6 +1630,7 @@ func resolveState(in StateInput) StateResult {
 				savedTicks := parts[1]
 				if strconv.Itoa(in.AgyPid) == savedPid && strconv.FormatInt(in.AgyTicks, 10) == savedTicks {
 					return StateResult{
+						Reason:          "turn_complete",
 						StatusIndicator: in.Symbols.Done,
 						MarkerAction:    "COMPLETED",
 					}
@@ -1617,14 +1639,16 @@ func resolveState(in StateInput) StateResult {
 		}
 
 		return StateResult{
+			Reason:          "ready",
 			StatusIndicator: in.Symbols.Ready,
 			MarkerAction:    "",
 		}
 	}
-	return StateResult{StatusIndicator: in.Symbols.Ready}
+	return StateResult{StatusIndicator: in.Symbols.Ready, Reason: "unknown_state"}
 }
 
 type RuntimeConfig struct {
+	TraceState    bool
 	Animate       bool
 	ShowPrefix    bool
 	CustomPrefix  string
@@ -1652,6 +1676,8 @@ func resolveRuntimeConfig(cliArgs []string, titleCfg *TitleConfig) RuntimeConfig
 	for i := 0; i < len(cliArgs); i++ {
 		arg := strings.ToLower(cliArgs[i])
 		switch arg {
+		case "--trace-state":
+			cfg.TraceState = true
 		case "--animate":
 			cfg.Animate = true
 		case "--no-animate":
@@ -1705,6 +1731,7 @@ func resolveRuntimeConfig(cliArgs []string, titleCfg *TitleConfig) RuntimeConfig
 
 	// 2. Hot-reload: settings.json "command" string and direct keys take priority over os.Args
 	if titleCfg != nil && strings.TrimSpace(titleCfg.Command) != "" {
+		cfg.TraceState = false
 		cfg.Animate = false
 		cfg.ShowPrefix = true
 		cfg.CustomPrefix = "agy:"
@@ -1717,6 +1744,7 @@ func resolveRuntimeConfig(cliArgs []string, titleCfg *TitleConfig) RuntimeConfig
 		cfg.CustomDone = ""
 
 		flags := parseCommandFlags(titleCfg.Command)
+		cfg.TraceState = flags.TraceState
 		cfg.Animate = flags.Animate
 		if flags.ShowPrefix != nil {
 			cfg.ShowPrefix = *flags.ShowPrefix
@@ -1789,6 +1817,7 @@ func checkHelpOrVersion(args []string) (isHelp bool, isVersion bool) {
 }
 
 func main() {
+	callbackStarted := time.Now().UnixNano()
 	if len(os.Args) > 1 && os.Args[1] == "--animation-worker" {
 		runAnimationWorker(os.Args[2:])
 		return
@@ -2044,10 +2073,35 @@ func main() {
 
 	staticTitle := prefixStr + cleanTitleText(statusIndicator) + " " + cleanTitle
 	animate := animationEnabled(runCfg)
-	updateAnimation(homeDir, agyPid, agyTicks, animationState{
+	display := animationState{
+		Enabled:      animate,
 		Animate:      animate && stateRes.IsWorking,
 		SettingsPath: animationSettingsPath,
 		Prefix:       prefixStr, Title: cleanTitle, StaticTitle: staticTitle,
-	})
-	fmt.Println(staticTitle)
+		UpdatedAt: callbackStarted, Reason: stateRes.Reason, Trace: runCfg.TraceState,
+	}
+	if stateRes.Reason == "background_tasks" && hasHistory && convID != "" && agyPid > 0 {
+		display.Completion = &backgroundCompletion{ConversationID: convID, TranscriptPath: transcriptPath, TaskTimeout: taskTimeout, DoneTitle: prefixStr + cleanTitleText(symbols.Done) + " " + cleanTitle}
+	}
+	publishErr := updateAnimation(homeDir, agyPid, agyTicks, display)
+	if publishErr == errSupersededCallback {
+		if runCfg.TraceState {
+			appendStateTrace(homeDir, agyPid, agyTicks, stateTrace{Source: "callback", AgentState: agentState, Reason: stateRes.Reason, Error: "superseded callback"})
+		}
+		if b, err := readBounded(animationPath(homeDir, animationKey(agyPid, agyTicks)), 65537); err == nil {
+			var latest animationState
+			if json.Unmarshal(b, &latest) == nil {
+				fmt.Println(latest.callbackTitle(nil, time.Now()))
+				return
+			}
+		}
+	}
+	if runCfg.TraceState {
+		entry := stateTrace{Source: "callback", AgentState: agentState, Reason: stateRes.Reason, ActiveTasks: activeTasks, ActiveSubagents: activeSubagents, Animate: display.Animate}
+		if publishErr != nil {
+			entry.Error = publishErr.Error()
+		}
+		appendStateTrace(homeDir, agyPid, agyTicks, entry)
+	}
+	fmt.Println(display.callbackTitle(publishErr, time.Now()))
 }

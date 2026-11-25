@@ -115,7 +115,20 @@ func TestAnimationConsoleHelper(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	settingsPath = filepath.Join(homeDir, "custom-settings.json")
 	s.SettingsPath = settingsPath
+	// Simulate another process truncating settings before completing its write.
+	// Keep the incomplete object across a poll: it must not disable the worker.
+	if err := os.WriteFile(settingsPath, []byte(`{"title":`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	updateAnimation(homeDir, pid, ticks, s)
+	time.Sleep(1250 * time.Millisecond)
+	if release, ok := animationLock(animationKey(pid, ticks), "worker"); ok {
+		release()
+		t.Fatal("incomplete settings stopped animation")
+	}
+	if consoleTitle() == s.StaticTitle {
+		t.Fatal("incomplete settings restored static Working")
+	}
 	if err := os.WriteFile(settingsPath, []byte(`{"title":{"command":"title"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +158,98 @@ func TestAnimationConsoleHelper(t *testing.T) {
 	s.SettingsPath = settingsPath
 	updateAnimation(homeDir, pid, ticks, s)
 	time.Sleep(200 * time.Millisecond)
+	// Idle background work must decay with no further callbacks, while a new
+	// Working event must be able to supersede that autonomous completion.
+	tasksDir := filepath.Join(homeDir, "tasks")
+	if err := os.MkdirAll(tasksDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(tasksDir, "task.log")
+	if err := os.WriteFile(logPath, []byte("running"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.Reason = "background_tasks"
+	s.UpdatedAt = time.Now().UnixNano()
+	s.Trace = true
+	s.Completion = &backgroundCompletion{ConversationID: "test", TranscriptPath: filepath.Join(homeDir, "logs", "transcript.jsonl"), TaskTimeout: 700 * time.Millisecond, DoneTitle: "✅ " + label}
+	if err := updateAnimation(homeDir, pid, ticks, s); err != nil {
+		t.Fatal(err)
+	}
+	limit = time.Now().Add(3 * time.Second)
+	for consoleTitle() != "✅ "+label && time.Now().Before(limit) {
+		time.Sleep(40 * time.Millisecond)
+	}
+	if consoleTitle() != "✅ "+label {
+		t.Fatal("idle background timeout needed another callback", consoleTitle())
+	}
+	bState, err := readBounded(animationPath(homeDir, animationKey(pid, ticks)), 65537)
+	var completed animationState
+	if err != nil || json.Unmarshal(bState, &completed) != nil || completed.Animate {
+		t.Fatal("completion was not published", err)
+	}
+	s.Completion = nil
+	s.Reason = "foreground"
+	s.UpdatedAt += 2
+	if err := updateAnimation(homeDir, pid, ticks, s); err != nil {
+		t.Fatal(err)
+	}
+	s.Animate = false
+	s.StaticTitle = "⚠️ " + label
+	s.UpdatedAt += 2
+	if err := updateAnimation(homeDir, pid, ticks, s); err != nil {
+		t.Fatal(err)
+	}
+	old := s
+	old.Animate = true
+	old.UpdatedAt--
+	if err := updateAnimation(homeDir, pid, ticks, old); err != errSupersededCallback {
+		t.Fatal("old Working callback overwrote final state", err)
+	}
+	limit = time.Now().Add(time.Second)
+	for consoleTitle() != s.StaticTitle && time.Now().Before(limit) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if consoleTitle() != s.StaticTitle {
+		t.Fatal("final transition was lost")
+	}
+	s.Animate = true
+	s.UpdatedAt++
+	if err := updateAnimation(homeDir, pid, ticks, s); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	// Simulate a filesystem refusing replacement of the final state. The
+	// out-of-band cancellation must stop the old worker before stdout is applied.
+	stateFile, _ := syscall.UTF16PtrFromString(animationPath(homeDir, animationKey(pid, ticks)))
+	handle, err := syscall.CreateFile(stateFile, syscall.GENERIC_READ, syscall.FILE_SHARE_READ, nil, syscall.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Animate = false
+	s.UpdatedAt++
+	s.StaticTitle = "✅ " + label
+	publishErr := updateAnimation(homeDir, pid, ticks, s)
+	_ = syscall.CloseHandle(handle)
+	if publishErr == nil {
+		t.Fatal("expected locked final state to reject replacement")
+	}
+	if release, ok := animationLock(animationKey(pid, ticks), "worker"); ok {
+		release()
+	} else {
+		t.Fatal("failed final publication left spinner alive")
+	}
+	finalTitle, _ := syscall.UTF16PtrFromString(s.StaticTitle)
+	setAnimationTitle.Call(uintptr(unsafe.Pointer(finalTitle)))
+	time.Sleep(200 * time.Millisecond)
+	if consoleTitle() != s.StaticTitle {
+		t.Fatal("cancelled worker overwrote final stdout title")
+	}
+	s.Animate = true
+	s.UpdatedAt++
+	if err := updateAnimation(homeDir, pid, ticks, s); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
 	b, _ := json.Marshal(map[string]interface{}{"pid": pid, "ticks": ticks, "frames": frames})
 	if err := os.WriteFile(os.Getenv("AGY_TITLE_REPORT"), b, 0600); err != nil {
 		t.Fatal(err)
@@ -153,7 +258,7 @@ func TestAnimationConsoleHelper(t *testing.T) {
 
 func TestAnimationIsolatedConsoles(t *testing.T) {
 	exe, _ := os.Executable()
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
 	defer cancel()
 	type child struct {
 		cmd    *exec.Cmd
@@ -203,5 +308,93 @@ func TestAnimationIsolatedConsoles(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
+	}
+}
+
+func TestAnimationPublicationFailureAndStaleCallback(t *testing.T) {
+	home := t.TempDir()
+	pid, ticks := os.Getpid(), getProcessCreationTicks(os.Getpid())
+	key := animationKey(pid, ticks)
+	p := animationPath(home, key)
+	latest := animationState{StaticTitle: "✅ Done", UpdatedAt: 20}
+	if err := writeAnimationState(p, latest); err != nil {
+		t.Fatal(err)
+	}
+	old := animationState{Animate: true, StaticTitle: "⚙️ Old", UpdatedAt: 10}
+	if err := updateAnimation(home, pid, ticks, old); err != errSupersededCallback {
+		t.Fatal("stale callback accepted", err)
+	}
+	b, err := os.ReadFile(p)
+	var got animationState
+	if err != nil || json.Unmarshal(b, &got) != nil || got.StaticTitle != latest.StaticTitle {
+		t.Fatal("final status changed", got, err)
+	}
+	// Replacing a directory must fail and must clean only its new scratch file.
+	blocked := filepath.Join(home, "blocked")
+	if err := os.Mkdir(blocked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAnimationState(blocked, latest); err == nil {
+		t.Fatal("expected atomic publication error")
+	}
+	leftovers, err := filepath.Glob(blocked + ".tmp.*")
+	if err != nil || len(leftovers) != 0 {
+		t.Fatal("publication scratch files leaked", leftovers, err)
+	}
+}
+
+func TestFirstStaticCallbackBlocksLateFirstWorking(t *testing.T) {
+	pid, ticks := os.Getpid(), getProcessCreationTicks(os.Getpid())
+	for _, reason := range []string{"waiting", "turn_complete", "ready"} {
+		t.Run(reason, func(t *testing.T) {
+			home := t.TempDir()
+			p := animationPath(home, animationKey(pid, ticks))
+			final := animationState{Enabled: true, StaticTitle: "Final " + reason, Reason: reason, UpdatedAt: 20}
+			if err := updateAnimation(home, pid, ticks, final); err != nil {
+				t.Fatal(err)
+			}
+			late := animationState{Enabled: true, Animate: true, StaticTitle: "⚙️ Old", UpdatedAt: 10}
+			if err := updateAnimation(home, pid, ticks, late); err != errSupersededCallback {
+				t.Fatal("late first Working accepted", err)
+			}
+			b, err := os.ReadFile(p)
+			var saved animationState
+			if err != nil || json.Unmarshal(b, &saved) != nil || saved.StaticTitle != final.StaticTitle || saved.UpdatedAt != 20 || saved.Animate {
+				t.Fatal("first static state lost", saved, err)
+			}
+		})
+	}
+	home := t.TempDir()
+	if err := updateAnimation(home, pid, ticks, animationState{StaticTitle: "Static mode", UpdatedAt: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(animationPath(home, animationKey(pid, ticks))); !os.IsNotExist(err) {
+		t.Fatal("static mode created animation record", err)
+	}
+}
+
+func TestAnimationDrawFailureTrace(t *testing.T) {
+	for _, tc := range []struct {
+		result uintptr
+		err    error
+		want   string
+	}{
+		{0, syscall.Errno(6), "Win32 error 6"},
+		{0, syscall.Errno(0), "no Win32 error reported"},
+	} {
+		err := animationDrawError(tc.result, tc.err)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatal(err, tc.want)
+		}
+		home := t.TempDir()
+		recordWorkerTrace(home, 123, 456, animationState{Animate: true, Trace: true, Reason: "foreground"}, err)
+		p := filepath.Join(home, ".gemini", "antigravity-cli-title", "diagnostic_123_456.jsonl")
+		b, readErr := os.ReadFile(p)
+		if readErr != nil || !strings.Contains(string(b), "SetConsoleTitleW failed") || !strings.Contains(string(b), tc.want) {
+			t.Fatal(string(b), readErr)
+		}
+	}
+	if err := animationDrawError(1, syscall.Errno(6)); err != nil {
+		t.Fatal("successful API surfaced stale LastError", err)
 	}
 }

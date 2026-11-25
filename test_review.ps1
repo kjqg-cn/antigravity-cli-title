@@ -45,12 +45,39 @@ Write-Host '[+] Boolean animation inheritance and explicit parameter precedence 
 
 $precise = '{"large":123456789012345678901234567890,"date":"2026-01-01T01:02:03Z","ratio":1.2345e-100,"title":{"command":"old"},"last":true}'
 $updated = Update-TitleJson $precise '{"command":"new"}'
-if ($updated -ne $precise.Replace('{"command":"old"}',' {"command":"new"}')) { throw 'Title update changed unrelated JSON bytes' }
+$prettyValue = '{' + [Environment]::NewLine + '    "command": "new"' + [Environment]::NewLine + '  }'
+if ($updated -ne $precise.Replace('{"command":"old"}',' '+$prettyValue)) { throw 'Title update changed unrelated JSON bytes' }
 foreach ($inputJson in @('{"title":1,"a":2}','{"a":2,"title":1}','{"title":1}')) {
     $removedTitle = Update-TitleJson $inputJson '' -Remove
     $check = ConvertFrom-Json $removedTitle
     if ($check.PSObject.Properties['title']) { throw 'Title removal failed' }
 }
+
+# Both install and uninstall restoration use the same nested indentation rules.
+foreach ($scriptName in @('install.ps1','uninstall.ps1')) {
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root $scriptName),[ref]$null,[ref]$null)
+    $updateAst = $scriptAst.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Update-TitleJson'},$true)
+    & {
+        param($updateAst,$scriptName)
+        . ([scriptblock]::Create($updateAst.Extent.Text))
+        foreach ($style in @(@{Indent='  ';NL="`n"},@{Indent='    ';NL="`r`n"},@{Indent="`t";NL="`n"})) {
+            $indent=$style.Indent; $nl=$style.NL
+            $raw='{'+$nl+$indent+'"other": 123456789012345678901234567890'+$nl+'}'+$nl
+            $value='{"type":"command","nested":{"text":"literal } , \\"}}'
+            $expectedBlock='"title": {'+$nl+($indent*2)+'"type": "command",'+$nl+($indent*2)+'"nested": {'+$nl+($indent*3)+'"text": "literal } , \\"'+$nl+($indent*2)+'}'+$nl+$indent+'}'
+            $result=Update-TitleJson $raw $value
+            if (-not $result.Contains($expectedBlock)) {throw "$scriptName insertion indentation mismatch: $result"}
+            if (-not $result.StartsWith('{'+$nl+$indent+'"other": 123456789012345678901234567890,')) {throw 'Unrelated number or formatting changed'}
+            $parsed=ConvertFrom-Json $result -ErrorAction Stop
+            if ($parsed.title.nested.text -ne 'literal } , \') {throw 'String value changed'}
+            $result=Update-TitleJson $result $value
+            if (-not $result.Contains($expectedBlock) -or -not $result.EndsWith($nl+'}'+$nl)) {throw "$scriptName reinstall layout mismatch"}
+        }
+        $fresh=Update-TitleJson '' '{"type":"command"}'
+        if (-not $fresh.Contains([Environment]::NewLine+'    "type": "command"'+[Environment]::NewLine+'  }')) {throw 'New settings indentation mismatch'}
+    } $updateAst $scriptName
+}
+Write-Host '[+] Title indentation, line endings, nested values and restoration regressions passed.'
 
 $sample = '{"profiles":{"defaults":{"font":{"face":"Custom Font"}}},"keybindings":[{"command":{"action":"sendInput","input":",} , ]"}}],}'
 $parsed = ConvertFrom-JsonC $sample

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,21 +19,31 @@ func readBounded(path string, limit int64) ([]byte, error) {
 }
 
 func readSettings(path string) (*TitleConfig, *Permissions) {
-	b, err := readBounded(path, 1<<20)
+	title, perms, _ := readSettingsWithStatus(path)
+	return title, perms
+}
+
+// Separate invalid/incomplete writes from a valid configuration disabling title.
+// Callers that animate may retry invalid input at the next bounded settings poll.
+func readSettingsWithStatus(path string) (*TitleConfig, *Permissions, error) {
+	b, err := readBounded(path, (1<<20)+1)
 	if err != nil {
-		return nil, nil
+		return nil, nil, err
+	}
+	if len(b) > 1<<20 {
+		return nil, nil, errors.New("settings exceeds read budget")
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(cleanStdin(b), &fields) != nil {
-		return nil, nil
+	if json.Unmarshal(cleanStdin(b), &fields) != nil || fields == nil {
+		return nil, nil, errors.New("settings is not a complete JSON object")
 	}
 	var title *TitleConfig
 	var perms *Permissions
-	if json.Unmarshal(fields["title"], &title) != nil {
-		title = nil
-	}
 	if json.Unmarshal(fields["permissions"], &perms) != nil {
 		perms = nil
+	}
+	if raw, ok := fields["title"]; ok && json.Unmarshal(raw, &title) != nil {
+		return nil, perms, errors.New("invalid title configuration")
 	}
 	var enabled struct {
 		Enabled *bool `json:"enabled"`
@@ -40,7 +51,7 @@ func readSettings(path string) (*TitleConfig, *Permissions) {
 	if json.Unmarshal(fields["title"], &enabled) == nil && enabled.Enabled != nil && !*enabled.Enabled {
 		title = nil
 	}
-	return title, perms
+	return title, perms, nil
 }
 
 func isTitleCommand(cfg *TitleConfig) bool {

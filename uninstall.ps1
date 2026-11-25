@@ -181,7 +181,22 @@ $callArgs['InvokedCommandPath'] = $PSCommandPath
 
 function Update-TitleJson([string]$raw, [string]$value, [switch]$Remove) {
     if ([string]::IsNullOrWhiteSpace($raw)) { $raw = '{}' }
+    $newline = if ($raw.Contains("`r`n")) { "`r`n" } elseif ($raw.Contains("`n")) { "`n" } else { [Environment]::NewLine }
+    $indent = '  '
+    $rootIndent = $null
+    $formatValue = {
+        param([string]$baseIndent)
+        # Format this value alone; leave every unrelated JSON literal untouched.
+        $formatted = Format-CleanJson $value 1
+        $lines = [regex]::Split($formatted, "\r?\n")
+        for ($lineIndex = 1; $lineIndex -lt $lines.Length; $lineIndex++) {
+            $spaces = [regex]::Match($lines[$lineIndex], '^ *').Length
+            $lines[$lineIndex] = $baseIndent + ($indent * $spaces) + $lines[$lineIndex].Substring($spaces)
+        }
+        return $lines -join $newline
+    }
     $depth = 0; $inString = $false; $escape = $false; $start = 0; $close = -1
+    $titleStart = -1; $titleEnd = -1; $titleHead = ''; $titleIndent = $null; $titleTail = ''
     for ($i = 0; $i -lt $raw.Length; $i++) {
         $c = $raw[$i]
         if ($inString) {
@@ -193,14 +208,25 @@ function Update-TitleJson([string]$raw, [string]$value, [switch]$Remove) {
         if ($c -eq [char]34) { $inString = $true; continue }
         if ($depth -eq 1 -and ($c -eq ',' -or $c -eq '}')) {
             $segment = $raw.Substring($start, $i - $start)
-            $match = [regex]::Match($segment, '^\s*("(?:\\.|[^"\\])*")\s*:')
-            if ($match.Success -and (ConvertFrom-Json $match.Groups[1].Value) -eq 'title') {
-                if ($Remove) {
-                    if ($c -eq ',') { return $raw.Substring(0,$start) + $raw.Substring($i+1) }
-                    if ($start -gt 0 -and $raw[$start-1] -eq ',') { $start-- }
-                    return $raw.Substring(0,$start) + $raw.Substring($i)
+            $match = [regex]::Match($segment, '^(\s*)("(?:\\.|[^"\\])*")\s*:')
+            if ($match.Success) {
+                $leading = $match.Groups[1].Value
+                $keyIndent = $null
+                if ($leading.Contains("`n")) {
+                    $keyIndent = $leading.Substring($leading.LastIndexOf("`n")+1)
+                    if ($rootIndent -eq $null -and $keyIndent.Length -gt 0) { $rootIndent = $keyIndent; $indent = $keyIndent }
                 }
-                return $raw.Substring(0,$start) + $segment.Substring(0,$match.Length) + ' ' + $value + $raw.Substring($i)
+                if ((ConvertFrom-Json $match.Groups[2].Value) -eq 'title') {
+                    if ($Remove) {
+                        if ($c -eq ',') { return $raw.Substring(0,$start) + $raw.Substring($i+1) }
+                        if ($start -gt 0 -and $raw[$start-1] -eq ',') { $start-- }
+                        return $raw.Substring(0,$start) + $raw.Substring($i)
+                    }
+                    $titleStart = $start; $titleEnd = $i
+                    $titleHead = $segment.Substring(0,$match.Length)
+                    $titleIndent = $keyIndent
+                    $titleTail = [regex]::Match($segment,'\s*$').Value
+                }
             }
             if ($c -eq ',') { $start = $i + 1 } else { $close = $i }
         }
@@ -208,10 +234,14 @@ function Update-TitleJson([string]$raw, [string]$value, [switch]$Remove) {
         elseif ($c -eq '}' -or $c -eq ']') { $depth-- }
     }
     if ($Remove) { return $raw }
+    if ($titleStart -ge 0) {
+        $baseIndent = if ($titleIndent -ne $null) { $titleIndent } else { $indent }
+        return $raw.Substring(0,$titleStart) + $titleHead + ' ' + (& $formatValue $baseIndent) + $titleTail + $raw.Substring($titleEnd)
+    }
     if ($close -lt 0) { throw 'Expected a root JSON object' }
     $prefix = $raw.Substring(0,$close).TrimEnd()
     $comma = if ($prefix.EndsWith('{')) { '' } else { ',' }
-    return $prefix + $comma + [Environment]::NewLine + '  "title": ' + $value + [Environment]::NewLine + $raw.Substring($close)
+    return $prefix + $comma + $newline + $indent + '"title": ' + (& $formatValue $indent) + $newline + $raw.Substring($close)
 }
 
 function Format-CleanJson([string]$json, [int]$indent = 2) {

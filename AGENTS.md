@@ -151,6 +151,33 @@ If the selected settings file disappears, the worker restores the static title
 and stops on its next settings poll. Animation boolean flags support
 `--animate`, `--animate=true`, `--animate=false` and `--no-animate`.
 
+Callbacks and workers share a time-based spinner phase; callbacks output a spinner
+frame immediately when animation publication succeeds. The worker paints before
+waiting for its first 100ms tick. Callback start timestamps reject older in-flight
+updates. Settings/task inspection runs outside state ownership and is followed by
+a state comparison before painting, so a new foreground update wins.
+Animation-enabled callbacks persist static states too, including the first Ready,
+Waiting or Done before any worker exists. This initial timestamp record rejects a
+late first Working callback; ordinary static mode still avoids creating animation
+state files. Invalid/incomplete settings reads leave the worker running until its
+next settings poll; valid removal/disable and missing files stop it as before.
+
+An explicit idle callback with background tasks (and no active subagents) may
+include a completion check in animation state. The worker rechecks known task-log
+activity roughly once per second, applies the existing task-timeout policy, and
+publishes a static Done title without another callback. Missing/unreadable logs
+are unknown, and foreground/subagent silence never proves completion.
+
+`--trace-state` enables bounded per-process diagnostic JSONL metadata (no prompt,
+command, file contents, title or workspace path). Record incoming state, counts,
+decision reason, and publication failures when investigating delayed completion.
+Worker title API failures include a numeric Win32 error when available, without
+recording the title text or settings path.
+Final-state publication retries are bounded. If a final state cannot replace the
+state file, a named event asks the existing worker to stop before the callback's
+static stdout title is applied; no terminal-output transport or WT profile logic
+is changed by this fallback.
+
 Do not render terminal control sequences into the callback's captured stdout.
 `go test ./...` includes hidden-console tests for continuous playback, independent
 consoles, static transitions, settings disable and owner-process exit.

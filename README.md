@@ -203,6 +203,14 @@ Animation is off by default. `--text` and a nonblank `--working` symbol keep the
 
 The renderer also accepts `--animate=true`, `--animate=false` and `--no-animate`; the last animation flag wins. If the selected settings file disappears, its worker restores the static title and stops at the next settings poll.
 
+If settings are temporarily empty, incomplete or unreadable during a write, the worker keeps the current animation and retries at its next settings poll. A valid configuration removing/disabling animation still stops it normally.
+
+The callback and worker use the same time-based spinner phase, so a Working update no longer inserts a static gear before the animation. Once telemetry explicitly reports idle with only background tasks remaining, the worker checks task-log activity about once a second and switches to Done after `--task-timeout` without needing another callback. Foreground work and active subagents never complete merely because telemetry is silent.
+
+To diagnose a delayed Done, temporarily append `--trace-state` to `title.command`. It writes bounded metadata to `~/.gemini/antigravity-cli-title/diagnostic_<pid>_<creation-time>.jsonl` (up to 1 MiB per process): incoming state, active task/subagent counts, the state decision reason, and publication failures. It records no prompts, commands, file contents or titles. Remove the flag after sampling. A missing final idle event or stale subagent status still requires real telemetry evidence; the worker does not guess completion from silence.
+
+The Windows installer and uninstaller format only the inserted/restored `title` block, following the file's root indentation and line endings (two spaces for a new file). Unrelated JSON literals and formatting remain unchanged.
+
 Workers are isolated by the agy PID and creation time, exit when that process exits, and fall back to the normal title if they cannot attach to its console. Native console API behavior is tested; visual rendering in each terminal still depends on its title settings (including `suppressApplicationTitle`).
 
 Configuration hot reload applies to callbacks launched by agy and this renderer's `title.command`. A direct manual invocation uses its own CLI flags.
