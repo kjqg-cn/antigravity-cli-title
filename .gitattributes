@@ -1,0 +1,16 @@
+# Enforce LF endings for Go source files so gofmt never fails on Windows checkout
+*.go text eol=lf
+
+# PowerShell scripts (Windows CRLF preferred)
+*.ps1 text eol=crlf
+
+# Shell scripts (LF required)
+*.sh text eol=lf
+
+# Common text files
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf

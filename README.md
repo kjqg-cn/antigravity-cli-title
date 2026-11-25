@@ -51,11 +51,11 @@ Existing solutions (like bottom statuslines) only work when the window is in the
 - **🏷️ Intelligent Title Hierarchy**:
   - `conversation_title` ➔ First user request (smartly truncated) ➔ Current workspace directory name.
 - **🚀 Ultra-Fast Native Execution Engine (`title.exe`)**:
-  - Pure Go native renderer with zero external dependencies, directly invoking Windows system APIs (`NtQueryInformationProcess`, `winsqlite3.dll`) with sub-3ms latency.
+  - Pure Go native renderer with zero external dependencies, directly invoking Windows system APIs (`NtQueryInformationProcess`, `winsqlite3.dll`) with low process overhead.
   - Automatically installed, compiled, or downloaded via `install.ps1`.
 - **🌐 Cross-Platform Native Support**:
   - Universal **Go native binary (`title.exe` / `title`)** for Windows, Linux, and macOS.
-  - Sub-3ms latency with zero Python or PowerShell dependencies.
+  - The renderer does not require Python or PowerShell; the POSIX installer uses Python 3 or jq to merge existing settings safely.
 
 ---
 
@@ -92,11 +92,13 @@ irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install
 ```powershell
 git clone https://github.com/kjqg-cn/antigravity-cli-title.git
 cd antigravity-cli-title
-.\install.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1
 
 # Local install with Profile
-.\install.ps1 -WTProfile
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -WTProfile
 ```
+> [!NOTE]
+> Under default Windows PowerShell (5.1) execution policies (`Restricted`), running with `-ExecutionPolicy Bypass` ensures script execution succeeds without modifying system-wide security settings.
 
 ### Linux / macOS (Bash)
 
@@ -115,6 +117,62 @@ cd antigravity-cli-title
 ./install.sh
 ```
 
+### 🎛️ Installer Parameters & Options
+
+Both `install.ps1` and `install.sh` support passing parameters directly during installation or upgrades.
+
+#### Windows (`install.ps1`)
+| Parameter | Default | Description |
+| :--- | :--- | :--- |
+| `-WTProfile` | Off | Automatically configures Windows Terminal profile and smart router. |
+| `-Animate` / `-NoAnimate` | Off | Enables Windows title animation, or disables it during reinstall. |
+| `-NoPrefix` | Off | Hides the leading `agy: ` prefix. To disable an inherited `--no-prefix` on reinstall, pass `-ShowPrefix`. |
+| `-Prefix <string>` | `"agy:"` | Customizes the prefix tag. |
+| `-Text` | Off | Uses text status tags (e.g. `[READY]`, `[DONE]`) instead of emojis. |
+| `-MaxLength <int>` | `35` | Maximum title length before truncation. |
+| `-TaskTimeout <int>` | `60` | Background task silence threshold (in seconds) before auto-releasing to DONE. |
+| `-ReadySymbol <str>` | `""` | Custom Ready indicator. |
+| `-WorkingSymbol <str>`| `""` | Custom Working indicator. |
+| `-WaitingSymbol <str>`| `""` | Custom Waiting indicator (e.g. `🔔`). |
+| `-DoneSymbol <str>` | `""` | Custom Done indicator. |
+
+*Examples:*
+```powershell
+# Online install with parameters:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.ps1))) -WTProfile -WaitingSymbol "🔔"
+
+# Reinstall and explicitly turn off previously inherited --no-prefix:
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -WTProfile -ShowPrefix
+```
+
+> [!NOTE]
+> **PowerShell Session Scoping**: Running `irm ... | iex` executes in the caller's session, where top-level parameter declarations like `$Prefix` can bind into the caller scope. When passing custom arguments or to avoid any caller session variable pollution, always prefer `& ([scriptblock]::Create((irm ...))) -Param ...` or execute via `-File .\install.ps1`.
+
+#### Linux / macOS (`install.sh`)
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `--no-prefix` / `--no-prefix=true` | Off | Hides the leading `agy: ` prefix. |
+| `--show-prefix` / `--no-prefix=false` | - | Re-enables the prefix tag (overriding previously inherited `--no-prefix`). |
+| `--text` / `--classic` | Off | Uses text status tags instead of emojis. |
+| `--animate` / `--no-animate` | Off | Preserves the animation option in configuration; POSIX titles remain static. |
+| `--no-text` / `--emoji` / `--text=false`| - | Uses emoji status indicators (overriding previously inherited `--text`). |
+| `--prefix=<str>` | `"agy:"` | Customizes the prefix tag. |
+| `--max-length=<n>` | `35` | Maximum title length before truncation. |
+| `--task-timeout=<n>` | `60` | Task silence threshold (seconds). |
+| `--ready=<str>` | `""` | Custom Ready indicator. |
+| `--working=<str>` | `""` | Custom Working indicator. |
+| `--waiting=<str>` | `""` | Custom Waiting indicator. |
+| `--done=<str>` | `""` | Custom Done indicator. |
+
+*Examples:*
+```bash
+# Online install with arguments:
+curl -fsSL https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.sh | bash -s -- --show-prefix --waiting="🔔"
+
+# Local install with custom options:
+./install.sh --show-prefix --text
+```
+
 ---
 
 ## ⚙️ Configuration & Options
@@ -130,6 +188,24 @@ The installation automatically updates `~/.gemini/antigravity-cli/settings.json`
   }
 }
 ```
+
+### Optional Working Title Animation (Windows)
+
+Add `--animate` to your existing `title.command`, or install locally with:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -Animate
+```
+
+Working cycles through `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` every 100ms. A separate native worker updates the console title, including while long commands produce no telemetry. Waiting, Ready and Done stay static. The terminal profile icon is preserved; OSC 9;4 is not used.
+
+Animation is off by default. `--text` and a nonblank `--working` symbol keep the static display. Linux/macOS accept `--animate` in both the renderer and installer and retain static titles. Remove `--animate` from `title.command` to stop it, or reinstall with `-NoAnimate` (also works with Windows PowerShell 5.1 `-File`). The worker polls only the settings file selected by its callback; CLI-only animation ignores unrelated default settings.
+
+The renderer also accepts `--animate=true`, `--animate=false` and `--no-animate`; the last animation flag wins. If the selected settings file disappears, its worker restores the static title and stops at the next settings poll.
+
+Workers are isolated by the agy PID and creation time, exit when that process exits, and fall back to the normal title if they cannot attach to its console. Native console API behavior is tested; visual rendering in each terminal still depends on its title settings (including `suppressApplicationTitle`).
+
+Configuration hot reload applies to callbacks launched by agy and this renderer's `title.command`. A direct manual invocation uses its own CLI flags.
 
 ### Custom State Symbols & Instant Hot-Reload
 
@@ -152,6 +228,7 @@ You can specify symbols via installer parameters (e.g. `-WaitingSymbol 🔔`) or
 
 | Flag | Example | Description |
 | :--- | :--- | :--- |
+| `--animate` / `--no-animate` | `title.exe --animate` | Enables/disables the optional Working spinner animation on Windows (`--animate=true` / `--animate=false` supported; overridden by `--text` or non-blank `--working`). |
 | `--no-prefix` | `title.exe --no-prefix` | Hides the leading `agy: ` tag (output: `✅ Refactor login`). |
 | `--prefix <str>` | `title.exe --prefix 🤖` | Customizes the prefix tag. |
 | `--text` / `--classic` | `title.exe --text` | Uses ASCII text indicators like `[DONE]` instead of emojis. |
@@ -197,12 +274,12 @@ To remove the title configuration and restore your previous settings:
 ### Windows:
 ```powershell
 # Run the uninstaller directly from the installation directory:
-powershell.exe -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1"
 
 # To completely purge the installation directory and all markers:
-powershell.exe -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1" -Purge
+powershell.exe -ExecutionPolicy Bypass -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1" -Purge
 ```
-*(Or run `.\uninstall.ps1 [-Purge]` from the cloned repository)*
+*(Or run `powershell.exe -ExecutionPolicy Bypass -File .\uninstall.ps1 [-Purge]` from the cloned repository)*
 
 ### Linux / macOS:
 ```bash

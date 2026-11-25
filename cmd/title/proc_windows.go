@@ -70,24 +70,32 @@ func getCommandLine(pid int) string {
 		return ""
 	}
 
-	ppOffset := pbi.PebBaseAddress + 0x20
-	addrBuf := make([]byte, 8)
+	peb, pointerSize := remotePeb(hProc, pbi.PebBaseAddress)
+	ppOffset := peb + 0x20
+	if pointerSize == 4 {
+		ppOffset = peb + 0x10
+	}
+	addrBuf := make([]byte, pointerSize)
 	if !readProcessMemory(hProc, ppOffset, addrBuf) {
 		return ""
 	}
-	procParams := uintptr(binary.LittleEndian.Uint64(addrBuf))
+	procParams := remotePointer(addrBuf)
 	if procParams == 0 {
 		return ""
 	}
 
-	header := make([]byte, 16)
-	if !readProcessMemory(hProc, procParams+0x70, header) {
+	header := make([]byte, pointerSize*2)
+	cmdOffset := uintptr(0x70)
+	if pointerSize == 4 {
+		cmdOffset = 0x40
+	}
+	if !readProcessMemory(hProc, procParams+cmdOffset, header) {
 		return ""
 	}
 
 	cmdLen := binary.LittleEndian.Uint16(header[0:2])
-	bufferPtr := uintptr(binary.LittleEndian.Uint64(header[8:16]))
-	if cmdLen == 0 || bufferPtr == 0 {
+	bufferPtr := remotePointer(header[pointerSize:])
+	if cmdLen == 0 || cmdLen%2 != 0 || bufferPtr == 0 {
 		return ""
 	}
 
@@ -206,7 +214,7 @@ func getExactAncestorAgy(startPid int) (int, int64) {
 			exeName = filepath.Base(cmd)
 		}
 
-		if exeName == "agy.exe" || exeName == "agy" || strings.HasPrefix(exeName, "agy") {
+		if exeName == "agy.exe" || exeName == "agy" {
 			ticks := getProcessCreationTicks(cur)
 			return cur, ticks
 		}
@@ -282,68 +290,31 @@ func hasActiveWorker(agyPid, currentPid int, targetCmd string) bool {
 		}
 	}
 
-	cleanedTarget := strings.ToLower(strings.TrimSpace(targetCmd))
-	var targetTokens []string
-	if cleanedTarget != "" {
-		fields := strings.FieldsFunc(cleanedTarget, func(r rune) bool {
-			return r == ' ' || r == '\t' || r == '\r' || r == '\n' || r == '"' || r == '\'' || r == ';'
-		})
-		for _, f := range fields {
-			f = strings.Trim(f, "\"',;")
-			if f == "powershell" || f == "powershell.exe" || f == "pwsh" || f == "cmd" || f == "cmd.exe" ||
-				f == "-noprofile" || f == "-executionpolicy" || f == "bypass" || f == "-command" || f == "/c" {
-				continue
-			}
-			if len(f) >= 2 {
-				targetTokens = append(targetTokens, f)
-			}
+	pat := parseWorkerTarget(targetCmd)
+	if !pat.valid {
+		return false
+	}
+	if pat.requiredDir != "" && !filepath.IsAbs(pat.requiredDir) {
+		if cwd := getProcessCwd(agyPid); cwd != "" {
+			pat.requiredDir = resolveWorkerDir(cwd, pat.requiredDir)
 		}
 	}
 
-	hasAnyValidDescendant := false
 	for childPid := range descendants {
 		if selfAncestors[childPid] {
 			continue
 		}
 		info := procMap[childPid]
-		exe := info.exe
-		if exe == "conhost.exe" || exe == "csc.exe" || exe == "cvtres.exe" {
+		exe := strings.ToLower(info.exe)
+		if exe == "conhost.exe" || exe == "csc.exe" || exe == "cvtres.exe" ||
+			exe == "title.exe" || exe == "statusline.exe" {
 			continue
 		}
 
 		cmd := strings.ToLower(getCommandLine(childPid))
-		if strings.Contains(cmd, "statusline") || strings.Contains(cmd, "title.ps1") ||
-			strings.Contains(cmd, "title.sh") || strings.Contains(cmd, "title.exe") ||
-			strings.Contains(cmd, "conhost") {
-			continue
-		}
-
-		hasAnyValidDescendant = true
-
-		if len(targetTokens) == 0 {
+		if matchWorkerProcess(exe, cmd, pat, getProcessCwd(childPid)) {
 			return true
 		}
-
-		if cmd != "" {
-			if strings.Contains(cmd, cleanedTarget) {
-				return true
-			}
-			for _, tok := range targetTokens {
-				if strings.Contains(cmd, tok) {
-					return true
-				}
-			}
-		}
-
-		for _, tok := range targetTokens {
-			if exe == tok || exe == tok+".exe" {
-				return true
-			}
-		}
-	}
-
-	if hasAnyValidDescendant {
-		return true
 	}
 
 	return false
@@ -351,6 +322,9 @@ func hasActiveWorker(agyPid, currentPid int, targetCmd string) bool {
 
 func getConversationTitle(dbPath, convID string) string {
 	if convID == "" || dbPath == "" {
+		return ""
+	}
+	if procSqlite3OpenV2.Find() != nil {
 		return ""
 	}
 	var db uintptr

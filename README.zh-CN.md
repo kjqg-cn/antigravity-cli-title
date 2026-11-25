@@ -51,11 +51,11 @@
 - **🏷️ 智能标题多级回退**：
   - 优先读取 `conversation_title` ➔ 回退至用户首句输入（智能截断） ➔ 回退至当前工作区目录名。
 - **🚀 原生超高速执行引擎 (`title.exe`)**：
-  - 基于纯 Go 构建的高性能执行引擎，零第三方依赖，直调 Windows 系统级 API（`NtQueryInformationProcess` 与 `winsqlite3.dll`），耗时极低（通常 < 3ms，比 PowerShell 进程冷启动快 13 倍以上）。
+  - 基于纯 Go 构建的高性能执行引擎，零第三方依赖，直调 Windows 系统级 API（`NtQueryInformationProcess` 与 `winsqlite3.dll`），避免 PowerShell 冷启动开销。
   - `install.ps1` 安装器会自动优先在本地编译或从 GitHub Release 下载预编译的 `title.exe`。
 - **🌐 全平台原生极速支持**：
   - Windows、Linux、macOS 全平台统一 **Go 原生编译二进制 (`title.exe` / `title`)**。
-  - 零外部运行时依赖（无需额外安装 Python3 或配置 PowerShell），全平台微秒级极速响应。
+  - 渲染器无 Python/PowerShell 运行时依赖；POSIX 安装器合并已有配置时需要 Python 3 或 jq。
 
 ---
 
@@ -92,11 +92,13 @@ irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install
 ```powershell
 git clone https://github.com/kjqg-cn/antigravity-cli-title.git
 cd antigravity-cli-title
-.\install.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1
 
 # 本地带 Profile 安装
-.\install.ps1 -WTProfile
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -WTProfile
 ```
+> [!NOTE]
+> Windows PowerShell (5.1) 默认策略为 `Restricted`，附加 `-ExecutionPolicy Bypass` 可在不更改系统全局安全策略的前提下顺利执行安装脚本。
 
 ### Linux / macOS (Bash)
 
@@ -115,6 +117,62 @@ cd antigravity-cli-title
 ./install.sh
 ```
 
+### 🎛️ 安装脚本参数与选项
+
+`install.ps1` 与 `install.sh` 均支持在安装或升级时直接传参定制。
+
+#### Windows (`install.ps1`)
+| 参数 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `-WTProfile` | 关闭 | 自动配置 Windows Terminal 专属 Profile 与智能路由。 |
+| `-Animate` / `-NoAnimate` | 关闭 | 启用 Windows 标题动画，或在重装时停用。 |
+| `-NoPrefix` | 关闭 | 隐藏标题开头的 `agy: ` 前缀。若需在重装时关掉先前继承的 `--no-prefix`，显式传入 `-ShowPrefix` 即可。 |
+| `-Prefix <string>` | `"agy:"` | 自定义前缀标签。 |
+| `-Text` | 关闭 | 使用纯文本状态标识（如 `[READY]`, `[DONE]`）替代 Emoji。 |
+| `-MaxLength <int>` | `35` | 标题超长截断字符数上限。 |
+| `-TaskTimeout <int>` | `60` | 后台静默任务自动转为完成状态的超时阈值（秒）。 |
+| `-ReadySymbol <str>` | `""` | 自定义 Ready 状态符号。 |
+| `-WorkingSymbol <str>`| `""` | 自定义 Working 状态符号。 |
+| `-WaitingSymbol <str>`| `""` | 自定义 Waiting 状态符号（如 `🔔`）。 |
+| `-DoneSymbol <str>` | `""` | 自定义 Done 状态符号。 |
+
+*调用示例：*
+```powershell
+# 在线带参安装：
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.ps1))) -WTProfile -WaitingSymbol "🔔"
+
+# 重新安装并显式关闭先前继承的 --no-prefix：
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -WTProfile -ShowPrefix
+```
+
+> [!NOTE]
+> **PowerShell 作用域提示**：使用 `irm ... | iex` 时，脚本运行在调用方顶级会话中，顶层 `param` 变量（如 `$Prefix`）会进入调用方作用域。如需传参或避免变量污染，推荐使用 `& ([scriptblock]::Create((irm ...))) -参数` 或下载后以 `-File .\install.ps1` 执行。
+
+#### Linux / macOS (`install.sh`)
+| 选项 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `--no-prefix` / `--no-prefix=true` | 关闭 | 隐藏开头的 `agy: ` 前缀。 |
+| `--show-prefix` / `--no-prefix=false` | - | 重新启用前缀（覆盖之前继承的 `--no-prefix`）。 |
+| `--text` / `--classic` | 关闭 | 使用纯文本状态标识替代 Emoji。 |
+| `--animate` / `--no-animate` | 关闭 | 在配置中保留或移除动画选项；POSIX 标题保持静态。 |
+| `--no-text` / `--emoji` / `--text=false`| - | 使用 Emoji 状态标识（覆盖之前继承的 `--text`）。 |
+| `--prefix=<str>` | `"agy:"` | 自定义前缀标签。 |
+| `--max-length=<n>` | `35` | 标题超长截断字符数上限。 |
+| `--task-timeout=<n>` | `60` | 后台静默任务超时阈值（秒）。 |
+| `--ready=<str>` | `""` | 自定义 Ready 状态符号。 |
+| `--working=<str>` | `""` | 自定义 Working 状态符号。 |
+| `--waiting=<str>` | `""` | 自定义 Waiting 状态符号。 |
+| `--done=<str>` | `""` | 自定义 Done 状态符号。 |
+
+*调用示例：*
+```bash
+# 在线带参安装：
+curl -fsSL https://raw.githubusercontent.com/kjqg-cn/antigravity-cli-title/main/install.sh | bash -s -- --show-prefix --waiting="🔔"
+
+# 本地带参安装：
+./install.sh --show-prefix --text
+```
+
 ---
 
 ## ⚙️ 配置与可选参数
@@ -130,6 +188,24 @@ cd antigravity-cli-title
   }
 }
 ```
+
+### 可选的工作中标题动画（Windows）
+
+在现有 `title.command` 中追加 `--animate`，或本地安装时传入：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -Animate
+```
+
+Working 状态每 100ms 轮换 `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`。独立原生辅助进程更新控制台标题，长命令没有新 telemetry 时也持续播放。Waiting、Ready、Done 保持静态；保留标签 Logo，不使用 OSC 9;4。
+
+动画默认关闭。`--text` 或非空白的自定义 `--working` 符号优先保留静态显示。Linux/macOS 的渲染器和安装器均接受 `--animate`，保持静态标题。删除 `title.command` 中的 `--animate`，或重装时传入 `-NoAnimate` 即可停用（兼容 Windows PowerShell 5.1 的 `-File` 调用）。辅助进程只轮询本次回调选用的配置文件；仅由 CLI 参数启用的动画不读取无关的默认配置。
+
+渲染器也接受 `--animate=true`、`--animate=false` 和 `--no-animate`；后出现的动画开关优先。若选定的配置文件消失，辅助进程会在下一次配置轮询时恢复静态标题并退出。
+
+辅助进程按 agy PID 与创建时间隔离，随该进程退出；无法附加控制台时保留普通标题。已验证原生控制台 API 行为，各终端的实际视觉呈现仍受标题设置（含 `suppressApplicationTitle`）影响。
+
+配置热加载仅用于 agy 启动且指向本渲染器的标题回调；独立手工运行遵循本次 CLI 参数。
 
 ### 自定义状态标识与即时热重载（Hot-Reload）
 
@@ -152,6 +228,7 @@ cd antigravity-cli-title
 
 | 参数选项 | 示例 | 作用说明 |
 | :--- | :--- | :--- |
+| `--animate` / `--no-animate` | `title.exe --animate` | 在 Windows 上启用或停用工作中旋转动画（同时支持 `--animate=true` / `--animate=false`；开启 `--text` 或非空白 `--working` 时保持静态）。 |
 | `--no-prefix` | `title.exe --no-prefix` | 隐藏开头的 `agy: ` 标识（显示如：`✅ Refactor login`）。 |
 | `--prefix <str>` | `title.exe --prefix 🤖` | 自定义前缀标识符。 |
 | `--text` / `--classic` | `title.exe --text` | 使用 `[DONE]` 等纯 ASCII 文本指示器替代 Emoji 图标。 |
@@ -197,12 +274,12 @@ stateDiagram-v2
 ### Windows：
 ```powershell
 # 直接运行已安装目录中的卸载脚本：
-powershell.exe -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1"
 
 # 若需彻底清除安装目录及所有历史状态标记：
-powershell.exe -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1" -Purge
+powershell.exe -ExecutionPolicy Bypass -File "$HOME\.gemini\antigravity-cli-title\uninstall.ps1" -Purge
 ```
-*(或者在克隆的源码仓库中执行 `.\uninstall.ps1 [-Purge]`)*
+*(或者在克隆的源码仓库中执行 `powershell.exe -ExecutionPolicy Bypass -File .\uninstall.ps1 [-Purge]`)*
 
 ### Linux / macOS：
 ```bash

@@ -7,7 +7,8 @@ on:
     branches: [ main, master ]
 
 jobs:
-  lint-and-test:
+  validate-scripts:
+    name: Validate Scripts & Encodings
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,20 @@ jobs:
               Write-Host "Verified UTF-8 No-BOM for: $rel"
           }
 
-          # 2. Validate AST syntax for installer PowerShell scripts
+          # 2. Web installers (install.ps1, uninstall.ps1) MUST BE pure ASCII (to prevent ANSI decoding corruptions in Windows PowerShell 5.1)
+          foreach ($rel in $noBomScripts) {
+              $fullPath = Resolve-Path $rel
+              $bytes = [System.IO.File]::ReadAllBytes($fullPath)
+              for ($i = 0; $i -lt $bytes.Length; $i++) {
+                  if ($bytes[$i] -gt 127) {
+                      Write-Error "File $rel contains non-ASCII byte at offset $i (value: $($bytes[$i])). Web installers must be 100% pure ASCII!"
+                      exit 1
+                  }
+              }
+              Write-Host "Verified pure ASCII encoding for: $rel"
+          }
+
+          # 3. Validate AST syntax for installer PowerShell scripts
           $allScripts = Get-ChildItem -Recurse -Filter *.ps1
           foreach ($s in $allScripts) {
               Write-Host "Validating AST for: $($s.FullName)"
@@ -40,6 +54,19 @@ jobs:
           }
           Write-Host "All PowerShell scripts passed encoding and AST syntax check."
 
+      - name: Run Router & Script Validation Suite (test_router.ps1)
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\test_router.ps1
+
+      - name: Run Review Regressions (PowerShell 5.1 and 7)
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\test_review.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File .\test_review.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Validate Bash Script Syntax
         shell: bash
         run: |
@@ -49,19 +76,60 @@ jobs:
               echo "All Bash scripts passed syntax validation."
           fi
 
+  go-matrix-test:
+    name: Go Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '>=1.22'
 
-      - name: Build & Test Go Native Engine (Windows, Linux, macOS)
+      - name: Verify gofmt
+        if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          go vet ./...
-          go test -v ./...
-          GOOS=windows GOARCH=amd64 go build -v -ldflags="-s -w" -o title.exe ./cmd/title
-          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o title_linux_amd64 ./cmd/title
-          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o title_linux_arm64 ./cmd/title
-          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o title_darwin_amd64 ./cmd/title
-          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o title_darwin_arm64 ./cmd/title
-          echo "All native binary targets compiled successfully."
+          diffs=$(gofmt -l .)
+          if [ -n "$diffs" ]; then
+            echo "The following files are not formatted with gofmt:"
+            echo "$diffs"
+            exit 1
+          fi
+          echo "gofmt check passed."
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run go test
+        run: go test -v ./...
+
+      - name: Verify POSIX Installer Parsers
+        if: matrix.os == 'ubuntu-latest'
+        run: bash test_py_sh.sh
+
+  cross-compile:
+    name: Cross-Compilation Matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.22'
+
+      - name: Cross-compile All Platforms
+        run: |
+          GOOS=windows GOARCH=amd64 go build -v -ldflags="-s -w" -o /tmp/title_windows_amd64.exe ./cmd/title
+          GOOS=windows GOARCH=arm64 go build -v -ldflags="-s -w" -o /tmp/title_windows_arm64.exe ./cmd/title
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o /tmp/title_linux_amd64 ./cmd/title
+          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o /tmp/title_linux_arm64 ./cmd/title
+          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o /tmp/title_darwin_amd64 ./cmd/title
+          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o /tmp/title_darwin_arm64 ./cmd/title
+          echo "All 6 native binary targets compiled successfully."

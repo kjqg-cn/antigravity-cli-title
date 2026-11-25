@@ -30,10 +30,26 @@ antigravity-cli-title/
 ├── docs/
 │   └── demo.gif                 # 4-state lifecycle demonstration animation
 ├── cmd/
-│   └── title/                   # Universal native execution engine (Windows / Linux / macOS)
+│   └── title/
+│       ├── main.go              # Telemetry, permissions and lifecycle state resolver
+│       ├── animation*.go        # Optional Windows animation worker, fallback and tests
+│       ├── command_statements.go # Worker command parsing and matching helpers
+│       ├── config_read.go       # Bounded settings reads and runtime flag parsing
+│       ├── cwd_windows*.go      # Native/WoW64 process cwd inspection and tests
+│       ├── proc_*.go            # Platform process trees and SQLite title lookup
+│       ├── darwin_parser.go     # macOS process snapshot parsing
+│       ├── main_test.go         # Core resolver and parser regression tests
+│       ├── review_fixes_test.go # Review-specific boundary regressions
+│       └── timeline_test.go     # Windows live worker detection tests
 ├── install.ps1 / install.sh     # Zero-config installers (injects into settings.json)
 ├── uninstall.ps1 / uninstall.sh # Clean uninstallers (preserves user settings)
-├── .gitignore                   # Ignores runtime markers and PIDs
+├── test_router.ps1              # AST and router command generation test suite
+├── test_review.ps1              # Isolated installer and data-preservation regressions
+├── test_py_sh.sh                # POSIX parser and invalid-root regressions
+├── .gitattributes               # Cross-platform source/script line endings
+├── .gitignore                   # Ignores runtime markers, binaries and local review logs
+├── assets/                      # Official Google Antigravity PNG / ICO / SVG icons
+├── go.mod                       # Go module definition
 ├── LICENSE                      # MIT License
 ├── README.md / README.zh-CN.md  # User-facing documentation (EN / zh-CN)
 └── AGENTS.md                    # This developer & AI handoff guide
@@ -57,12 +73,12 @@ antigravity-cli-title/
      - If `hasHistory == false` ➔ **`⚪` Ready**.
 
 ### 2.3 Title Resolution Hierarchy & Fast SQLite Query
-Antigravity CLI does not send a `conversation_title` field in standard telemetry stdin payloads. To provide accurate and responsive titles:
-1. **Tier 1 - Telemetry Payload**: Check `$data.conversation_title` (if future CLI versions supply it).
+Antigravity CLI (versions >= 1.4.10) includes `conversation_title` directly in telemetry stdin payloads. To provide accurate and responsive titles across all versions:
+1. **Tier 1 - Telemetry Payload**: Check `$data.conversation_title` (provided natively in newer CLI versions).
 2. **Tier 2 - Global SQLite Summary (`conversation_summaries.db`)**:
    - `/resume` reads AI-generated conversation summaries from `~/.gemini/antigravity-cli/conversation_summaries.db`.
    - On Windows, `title.exe` binds directly to Windows 10/11 native `winsqlite3.dll` to query the title in read-only mode (< 1ms, zero third-party dependencies).
-   - On Linux/macOS, `title` dynamically queries sqlite3 in read-only URI mode (`file:... ?mode=ro`) when available.
+   - On Linux/macOS, `title` dynamically queries sqlite3 with `-readonly` CLI flag when available.
 3. **Tier 3 - Immediate Transcript Prompt (`transcript.jsonl`)**:
    - In turn 1 before the model finishes and generates an AI summary, the title immediately mirrors the user's first prompt (`<USER_REQUEST>`).
    - Note: Pipeline results in PowerShell MUST be wrapped in `@(...)` to avoid single-line string unwrapping into `[char]` indexing.
@@ -70,22 +86,28 @@ Antigravity CLI does not send a `conversation_title` field in standard telemetry
    - Used only in fresh, unprompted workspaces (`hasHistory == false`), ensuring clean `⚪ Ready <cwd>` display.
 
 ### 2.4 Sub-Event Inspection (`ask_question` & Permissions)
-Under `agent_state == "tool_use"`, the script seeks the last 128KB of `transcript.jsonl` to locate the active `PLANNER_RESPONSE` (skipping intermediate completed tool output frames like `type: "GENERIC"`):
-1. **Multi-Tool Batch Inspection**: Scans all tool calls in `tool_calls` array (not just index 0), ensuring any pending interactive approval blocks the turn into `⚠️ Waiting`.
-2. If tool name is `ask_question`, `ask`, `prompt_user`, `get_confirmation`, `request_feedback` ➔ `⚠️ Waiting`.
-3. If tool name is `run_command` matching `permissions.ask` (or not in `permissions.allow`):
-   - Supports both `command(regex:...)` and standard glob `command(...)` rules.
-   - Unescapes literal escape sequences (`\n`, `\r`, `\t`, `\"`) before regex matching.
-   - Check if `agy.exe` already has an active worker child process executing this command (`FastProcFinder::HasActiveWorker` with target command fingerprinting):
-     - If matching worker child exists (user confirmed, command executing) ➔ `⚙️ Working`.
-     - If no matching worker child exists (blocked on `[y/n]` interactive prompt, ignoring unrelated background tasks/MCP servers) ➔ `⚠️ Waiting`.
-4. If tool name is sensitive file operation (`read_file`, `write_file`, `edit_file`) matching `permissions.ask`:
-   - Normalizes Windows `\` and Unix `/` separators across path arguments and permission rules.
-   - Matches relative paths outside current workspace against parent rules (e.g. `../*`).
-   - ➔ `⚠️ Waiting`.
-5. If tool name is an MCP tool or custom extension matching `permissions.ask` ➔ `⚠️ Waiting`.
-6. Background tasks/subagents do NOT override foreground permission prompts: even with active background jobs, pending user approvals are faithfully presented as `⚠️ Waiting`.
-7. Otherwise ➔ `⚙️ Working`.
+Under `agent_state == "tool_use"`, the engine inspects the tail of `transcript.jsonl` (or `transcript_full.jsonl`) to locate the active `PLANNER_RESPONSE` and dispatches through the pure `resolveState` resolver:
+1. **Multi-Tool Batch Inspection**: Scans all tool calls in `tool_calls` array (not just index 0), ensuring any pending interactive approval in the batch transitions the turn into `⚠️ Waiting`.
+2. **Interactive Prompts**: If tool name is `ask_question`, `ask`, `prompt_user`, `get_confirmation`, `request_feedback` ➔ `⚠️ Waiting`.
+3. **Command Execution & Worker Verification**:
+   - Matches `command(...)` and `run_command(...)` rules: `allow` rules strictly use anchored regex (`^(?i)...$`) preventing command chaining attacks, while `ask` rules support substring and glob matching.
+   - Preserves JSON-decoded command text and Windows backslashes; never globally unescapes `\n`, `\r`, or `\t` a second time.
+   - When permission requires confirmation (or under nil permissions baseline), inspects the process tree via `hasActiveWorker`:
+     - **Directory boundary scoping (`requiredDir`)**: If the command begins with directory navigation (`cd <dir> && ...` or `Push-Location`), verifies that descendant processes match the target directory, preventing false positives from identical commands in other directories.
+     - **Primary Executable & Argument Token Matching**: Compares primary executable image (`targetExe`, `altExe`, or `innerExe` e.g. for `powershell -c ...`). Checks all tokens via `matchArgToken` with word boundary enforcement across both `coreTokens` (>= 3 runes, non-flag) and `allTokens`.
+     - **Adjacent Phrase Boundary Matching**: Validates multi-token command phrases (`strings.Join(pat.allTokens, " ")`) via `matchPhraseBoundary`, ensuring flags and parameters match adjacent word/quote boundaries without partial substring collisions (e.g. `Start-Sleep -Seconds 5` will never match `git log -n 5`, and `git log -n 5` will not match `git log -n 50`).
+     - **Fallback Substantive Statement Rule**: If primary exe check does not match (e.g. PowerShell cmdlets like `Start-Sleep`, shell scripts, tool wrappers like `npm`/`mvn`, or compound command pipelines), tests candidate phrases against `firstStmt`, `subStatements`, and `normalizedFull` with quote/escape stripping, filtering out noise words (`noprofile`, `bypass`, etc.).
+     - If matching worker child exists (user confirmed, command currently executing) ➔ `⚙️ Working`.
+     - If no matching worker child exists (blocked on interactive `[y/n]` prompt) ➔ `⚠️ Waiting`.
+4. **Sensitive File Operations**:
+   - For `read_file`, `write_file`, `edit_file`, `replace_file_content`, `multi_replace_file_content`, `write_to_file`, `view_file`:
+     - Normalizes Windows `\` and Unix `/` separators.
+     - Rooted and root-relative paths (starting with `/` or `\`) are strictly validated against `cwd` boundaries across both Windows drive volumes and Unix roots.
+     - Windows drive-relative paths (`C:foo.txt`, `D:foo.txt`) are rejected before `filepath.Join` and conservatively transition to `⚠️ Waiting`.
+     - Out-of-workspace writes automatically require user confirmation ➔ `⚠️ Waiting`.
+5. **MCP Tools & Extensions**: Any custom extension or MCP tool matching `permissions.ask` ➔ `⚠️ Waiting`.
+6. **Task Priority Rule**: Pending user approvals take precedence over background tasks/subagents; interactive prompts are faithfully rendered as `⚠️ Waiting`.
+7. **Default**: Otherwise ➔ `⚙️ Working`.
 
 ---
 
@@ -110,10 +132,39 @@ Under `agent_state == "tool_use"`, the script seeks the last 128KB of `transcrip
 
 ## 4. Development & Testing Commands
 
+### Optional Windows title animation
+
+`title.command` may include `--animate` (or install using `install.ps1 -Animate`).
+The ordinary telemetry callback stays short-lived. A separate `--animation-worker`
+process attaches to the owning agy console and calls `SetConsoleTitleW` every 100ms.
+Workers are isolated by PID + creation time and a named mutex; stdin/stdout pipes
+are not inherited. A small atomically replaced state file carries the resolved
+title and Working flag. Waiting/Ready/Done stop animation; `--text` and a custom
+Working symbol retain static display. Removing `--animate` stops the worker on its
+next settings poll. The state file records the callback's selected settings path;
+CLI-only workers do not poll unrelated default settings. On Windows, callbacks
+honor the owning agy's `--settings` argument. `-NoAnimate` disables inherited
+animation through the installer, including PowerShell 5.1 `-File` calls.
+Workers ignore console Ctrl+C and retire under the state lock so a fast resume
+cannot lose the next worker. Linux/macOS currently retain static titles.
+If the selected settings file disappears, the worker restores the static title
+and stops on its next settings poll. Animation boolean flags support
+`--animate`, `--animate=true`, `--animate=false` and `--no-animate`.
+
+Do not render terminal control sequences into the callback's captured stdout.
+`go test ./...` includes hidden-console tests for continuous playback, independent
+consoles, static transitions, settings disable and owner-process exit.
+
 ### 4.1 Validate Go Engine & Build
 ```powershell
+gofmt -l .
+go vet ./...
 go test ./...
 go build -ldflags="-s -w" -o title.exe ./cmd/title
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test_router.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test_review.ps1
+pwsh -NoProfile -File .\test_review.ps1
+bash test_py_sh.sh
 ```
 
 ### 4.2 Test Native Engine with Simulated Payload
@@ -167,7 +218,10 @@ This project is actively maintained and evolved by the user. Future agents shoul
   - Hot-reload via `settings.json` `title.command` dynamic argument parsing with instant runtime reflection (0 restart needed).
   - Standalone custom JSON keys in `title` are avoided because Antigravity CLI's native Go schema purges unwhitelisted properties upon CLI restarts/rewrites.
   - Robust quote stripping (`cleanSymbol`) and space-aware argument handling to eliminate harmful `\"` backslash escapes in `command`.
-  - Multi-tier priority resolution: `CLI Flag > settings.json command string > Built-in preset`.
+  - Multi-tier priority resolution: `settings.json command string > CLI Flag > Built-in preset` (for instant hot-reload).
+- [x] **Optional Windows Title Animation & Cross-Platform Hardening (`v0.4.0`)**:
+  - Added detached `--animation-worker` with PID + creation-time mutex isolation, Ctrl+C resilience, `--settings` scoping and clean lock retirement.
+  - Added JSONC-aware Windows Terminal installer preservation, pure-ASCII PS profile router, WoW64 CWD matching, bounded transcript inspection, and POSIX installer regressions.
 - [-] **Windows Terminal Tab Progress & Visual Ring (`OSC 9;4`)**:
   - Fully tested and evaluated: Windows Terminal's native WinUI ProgressRing forces system accent color (blue, breaking yellow warning indication) and occludes the tab profile icon. Dropped in favor of pure 4-state Emoji in title.
 - [ ] **Linux / macOS Terminal Enhancements**:

@@ -38,7 +38,7 @@ func readLinuxProcStat(pid int) (*linuxProcInfo, error) {
 		return nil, fmt.Errorf("stat fields too short")
 	}
 
-	ppid, _ := strconv.Atoi(after[1])       // field 4 is index 1
+	ppid, _ := strconv.Atoi(after[1])                   // field 4 is index 1
 	starttime, _ := strconv.ParseInt(after[19], 10, 64) // field 22 is index 19
 
 	return &linuxProcInfo{
@@ -63,7 +63,7 @@ func getExactAncestorAgy(startPid int) (int, int64) {
 			break
 		}
 		comm := strings.ToLower(pInfo.comm)
-		if comm == "agy" || strings.HasPrefix(comm, "agy") {
+		if comm == "agy" {
 			return pInfo.pid, pInfo.starttime
 		}
 	}
@@ -147,25 +147,16 @@ func hasActiveWorker(agyPid, currentPid int, targetCmd string) bool {
 		}
 	}
 
-	// 4. Tokenize target command
-	cleanedTarget := strings.ToLower(strings.TrimSpace(targetCmd))
-	var targetTokens []string
-	if cleanedTarget != "" {
-		fields := strings.FieldsFunc(cleanedTarget, func(r rune) bool {
-			return r == ' ' || r == '\t' || r == '\r' || r == '\n' || r == '"' || r == '\'' || r == ';'
-		})
-		for _, f := range fields {
-			f = strings.Trim(f, "\"',;")
-			if f == "bash" || f == "sh" || f == "zsh" || f == "-c" || f == "-e" {
-				continue
-			}
-			if len(f) >= 2 {
-				targetTokens = append(targetTokens, f)
-			}
+	pat := parseWorkerTarget(targetCmd)
+	if !pat.valid {
+		return false
+	}
+	if pat.requiredDir != "" && !filepath.IsAbs(pat.requiredDir) {
+		if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", agyPid)); err == nil {
+			pat.requiredDir = filepath.Clean(filepath.Join(cwd, pat.requiredDir))
 		}
 	}
 
-	hasAnyValidDescendant := false
 	for childPid := range descendants {
 		if selfAncestors[childPid] {
 			continue
@@ -176,35 +167,20 @@ func hasActiveWorker(agyPid, currentPid int, targetCmd string) bool {
 		cmdBytes, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", childPid))
 		cmdline := strings.ToLower(strings.ReplaceAll(string(cmdBytes), "\x00", " "))
 
-		if strings.Contains(cmdline, "statusline") || strings.Contains(cmdline, "title") {
+		baseComm := filepath.Base(comm)
+		if comm == "title" || comm == "statusline" ||
+			baseComm == "title" || baseComm == "statusline" ||
+			strings.HasSuffix(comm, "/title") || strings.HasSuffix(comm, "/statusline") {
 			continue
 		}
 
-		hasAnyValidDescendant = true
-
-		if len(targetTokens) == 0 {
+		cwd, _ := os.Readlink(fmt.Sprintf("/proc/%d/cwd", childPid))
+		if matchWorkerProcess(comm, cmdline, pat, cwd) {
 			return true
-		}
-
-		if cmdline != "" {
-			if strings.Contains(cmdline, cleanedTarget) {
-				return true
-			}
-			for _, tok := range targetTokens {
-				if strings.Contains(cmdline, tok) {
-					return true
-				}
-			}
-		}
-
-		for _, tok := range targetTokens {
-			if comm == tok {
-				return true
-			}
 		}
 	}
 
-	return hasAnyValidDescendant
+	return false
 }
 
 func getConversationTitle(dbPath, convID string) string {
@@ -218,7 +194,7 @@ func getConversationTitle(dbPath, convID string) string {
 	sql := fmt.Sprintf("SELECT title FROM conversation_summaries WHERE conversation_id = '%s' LIMIT 1", strings.ReplaceAll(convID, "'", "''"))
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitePath, "file:"+filepath.ToSlash(dbPath)+"?mode=ro", sql)
+	cmd := exec.CommandContext(ctx, sqlitePath, "-init", "/dev/null", "-noheader", "-readonly", dbPath, sql)
 	out, err := cmd.Output()
 	if err == nil {
 		return strings.TrimSpace(string(out))

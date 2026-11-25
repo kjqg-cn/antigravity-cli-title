@@ -5,24 +5,49 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
 
 type darwinProcNode struct {
-	pid  int
-	ppid int
-	comm string
+	pid     int
+	ppid    int
+	comm    string
+	ticks   int64
+	cmdline string
 }
 
 func getDarwinProcessSnapshot() (map[int]darwinProcNode, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,comm=")
+	cmd := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,ppid=,comm=,lstart=,command=")
+	var origLCAll string
+	hasLCAll := false
+	hasLCCType := false
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "LC_ALL=") {
+			hasLCAll = true
+			origLCAll = strings.TrimPrefix(e, "LC_ALL=")
+			continue
+		}
+		if strings.HasPrefix(e, "LC_TIME=") {
+			continue
+		}
+		if strings.HasPrefix(e, "LC_CTYPE=") {
+			hasLCCType = true
+		}
+		env = append(env, e)
+	}
+	if hasLCAll && !hasLCCType && origLCAll != "" {
+		env = append(env, "LC_CTYPE="+origLCAll)
+	}
+	env = append(env, "LC_TIME=C")
+	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -31,17 +56,13 @@ func getDarwinProcessSnapshot() (map[int]darwinProcNode, error) {
 	result := make(map[int]darwinProcNode)
 	lines := strings.Split(string(out), "\n")
 	for _, l := range lines {
-		f := strings.Fields(strings.TrimSpace(l))
-		if len(f) >= 3 {
-			pid, _ := strconv.Atoi(f[0])
-			ppid, _ := strconv.Atoi(f[1])
-			comm := strings.ToLower(filepath.Base(f[2]))
-			if pid > 0 {
-				result[pid] = darwinProcNode{
-					pid:  pid,
-					ppid: ppid,
-					comm: comm,
-				}
+		if pid, ppid, comm, ticks, cmdline, ok := parseDarwinPsLine(l); ok {
+			result[pid] = darwinProcNode{
+				pid:     pid,
+				ppid:    ppid,
+				comm:    strings.ToLower(comm),
+				ticks:   ticks,
+				cmdline: strings.ToLower(cmdline),
 			}
 		}
 	}
@@ -65,14 +86,11 @@ func getExactAncestorAgy(startPid int) (int, int64) {
 		if !ok {
 			break
 		}
-		if pNode.comm == "agy" || strings.HasPrefix(pNode.comm, "agy") {
-			// Query start time for ticks
-			ticks := int64(pNode.pid)
-			out, err := exec.Command("ps", "-p", strconv.Itoa(pNode.pid), "-o", "lstart=").Output()
-			if err == nil {
-				if t, err := time.Parse("Mon Jan _2 15:04:05 2006", strings.TrimSpace(string(out))); err == nil {
-					ticks = t.UnixNano()
-				}
+		baseComm := filepath.Base(pNode.comm)
+		if pNode.comm == "agy" || baseComm == "agy" {
+			ticks := pNode.ticks
+			if ticks == 0 {
+				ticks = int64(pNode.pid)
 			}
 			return pNode.pid, ticks
 		}
@@ -130,63 +148,32 @@ func hasActiveWorker(agyPid, currentPid int, targetCmd string) bool {
 		}
 	}
 
-	cleanedTarget := strings.ToLower(strings.TrimSpace(targetCmd))
-	var targetTokens []string
-	if cleanedTarget != "" {
-		fields := strings.FieldsFunc(cleanedTarget, func(r rune) bool {
-			return r == ' ' || r == '\t' || r == '\r' || r == '\n' || r == '"' || r == '\'' || r == ';'
-		})
-		for _, f := range fields {
-			f = strings.Trim(f, "\"',;")
-			if f == "bash" || f == "sh" || f == "zsh" || f == "-c" || f == "-e" {
-				continue
-			}
-			if len(f) >= 2 {
-				targetTokens = append(targetTokens, f)
-			}
-		}
+	pat := parseWorkerTarget(targetCmd)
+	if !pat.valid {
+		return false
 	}
 
-	hasAnyValidDescendant := false
 	for childPid := range descendants {
 		if selfAncestors[childPid] {
 			continue
 		}
 		node := procMap[childPid]
 		comm := node.comm
+		baseComm := filepath.Base(comm)
 
-		out, _ := exec.Command("ps", "-p", strconv.Itoa(childPid), "-o", "command=").Output()
-		cmdline := strings.ToLower(strings.TrimSpace(string(out)))
-
-		if strings.Contains(cmdline, "statusline") || strings.Contains(cmdline, "title") {
+		if comm == "title" || comm == "statusline" ||
+			baseComm == "title" || baseComm == "statusline" ||
+			strings.HasSuffix(comm, "/title") || strings.HasSuffix(comm, "/statusline") {
 			continue
 		}
 
-		hasAnyValidDescendant = true
-
-		if len(targetTokens) == 0 {
+		cmdline := node.cmdline
+		if matchWorkerProcess(comm, cmdline, pat) {
 			return true
-		}
-
-		if cmdline != "" {
-			if strings.Contains(cmdline, cleanedTarget) {
-				return true
-			}
-			for _, tok := range targetTokens {
-				if strings.Contains(cmdline, tok) {
-					return true
-				}
-			}
-		}
-
-		for _, tok := range targetTokens {
-			if comm == tok {
-				return true
-			}
 		}
 	}
 
-	return hasAnyValidDescendant
+	return false
 }
 
 func getConversationTitle(dbPath, convID string) string {
@@ -200,7 +187,7 @@ func getConversationTitle(dbPath, convID string) string {
 	sql := fmt.Sprintf("SELECT title FROM conversation_summaries WHERE conversation_id = '%s' LIMIT 1", strings.ReplaceAll(convID, "'", "''"))
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sqlitePath, "file:"+filepath.ToSlash(dbPath)+"?mode=ro", sql)
+	cmd := exec.CommandContext(ctx, sqlitePath, "-init", "/dev/null", "-noheader", "-readonly", dbPath, sql)
 	out, err := cmd.Output()
 	if err == nil {
 		return strings.TrimSpace(string(out))

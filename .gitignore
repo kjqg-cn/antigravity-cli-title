@@ -24,9 +24,14 @@ desktop.ini
 # Test artifacts
 scratch/
 test_*/
+test_*.sh
+!test_py_sh.sh
 
 # Compiled binaries & release artifacts
 *.exe
 /title
 /title_*
 dist/
+
+# Local review reports, diagnostic probes & cleanup logs
+review/
